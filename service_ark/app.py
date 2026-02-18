@@ -57,7 +57,7 @@ else:
                 except:
                     return 0.0
 
-            # Sektions-opdeling
+            # Find sektions-indekser
             v_idx = df[df[beskrivelse_kol].astype(str).str.contains('Væsker', case=False, na=False)].index
             d_idx = df[df[beskrivelse_kol].astype(str).str.contains('Diverse', case=False, na=False)].index
             v_start = v_idx[0] if len(v_idx) > 0 else 9999
@@ -68,37 +68,30 @@ else:
             # --- DATA OPSAMLING ---
             df['markeret'] = df[valgt_interval].astype(str).replace(['nan', 'None'], '').str.strip() != ""
             
+            # 1. SUM RESERVEDELE (Filtre osv.)
             hoved = df[(df.index < v_start) & (df['markeret']) & (~df['er_skjult'])].copy()
+            
+            # 2. VÆSKER
             vaesker = df[(df.index > v_start) & (df.index < d_start) & (df['markeret']) & (~df['er_skjult'])].copy()
             
-            # Diverse (Undtagen selve overskriften og rækker uden pris)
+            # 3. DIVERSE
             diverse_sektion = df[df.index >= d_start].copy()
             diverse = diverse_sektion[(~diverse_sektion['er_skjult'])].copy()
             diverse['pris_tjek'] = diverse[pris_kol_h].apply(rens_til_tal)
             diverse = diverse[(diverse['pris_tjek'] > 0) & (~diverse[beskrivelse_kol].astype(str).str.contains('^diverse$', case=False, na=False))].copy()
 
-            # --- NY FUNKTION: MANUEL STYRING AF ARBEJDSTIMER ---
+            # --- ARBEJDSTIMER (Sidebar styring) ---
             st.sidebar.divider()
-            st.sidebar.subheader("Arbejdstimer")
-            
-            # Find vejledende timer fra arket (rækken "Arbejdstimer")
             mask_arbejd = df[beskrivelse_kol].astype(str).str.contains('Arbejd', case=False, na=False)
             vejledende_timer = 0.0
             if mask_arbejd.any():
                 timer_raw = df[mask_arbejd][valgt_interval].values[0]
                 vejledende_timer = rens_til_tal(timer_raw)
 
-            # Opret inputfelt hvor du selv kan skrive timerne
-            valgte_timer = st.sidebar.number_input(
-                f"Timer til {valgt_interval}", 
-                value=float(vejledende_timer), 
-                step=0.5,
-                help=f"Vejledende tid fra skemaet er {vejledende_timer} timer."
-            )
-            
+            valgte_timer = st.sidebar.number_input(f"Arbejdstimer ({valgt_interval})", value=float(vejledende_timer), step=0.5)
             arbejd_total = valgte_timer * timepris
 
-            # --- BEREGNINGER AF DELE ---
+            # --- BEREGNINGER ---
             def apply_calc(data, kilde_kol, mult=1.0):
                 if data.empty: return data
                 data = data.copy()
@@ -142,20 +135,23 @@ else:
                     'Total': diverse['Total_Tal'].map("{:,.2f} DKK".format)
                 }), use_container_width=True, hide_index=True)
 
-            # --- TOTALER ---
+            # --- TOTALER MED SUM RESERVEDELE ---
             st.divider()
-            dele_sum = hoved['Total_Tal'].sum() + vaesker['Total_Tal'].sum() + diverse['Total_Tal'].sum()
+            sum_reservedele = hoved['Total_Tal'].sum() if not hoved.empty else 0
+            sum_vaesker_diverse = (vaesker['Total_Tal'].sum() if not vaesker.empty else 0) + (diverse['Total_Tal'].sum() if not diverse.empty else 0)
             
-            c1, c2, c3 = st.columns(3)
+            c1, c2, c3, c4 = st.columns(4)
             with c1:
-                st.metric("Reservedele & Væsker", f"{dele_sum:,.2f} DKK")
+                st.metric("SUM Reservedele", f"{sum_reservedele:,.2f} DKK")
             with c2:
-                st.metric("Arbejdsløn", f"{arbejd_total:,.2f} DKK", help=f"{valgte_timer} timer á {timepris} DKK")
+                st.metric("Væsker & Diverse", f"{sum_vaesker_diverse:,.2f} DKK")
             with c3:
-                st.metric("Samlet Pris (Ekskl. moms)", f"{(dele_sum + arbejd_total):,.2f} DKK")
+                st.metric("Arbejdsløn", f"{arbejd_total:,.2f} DKK")
+            with c4:
+                total_alt = sum_reservedele + sum_vaesker_diverse + arbejd_total
+                st.metric("SAMLET TOTAL", f"{total_alt:,.2f} DKK")
 
-            if valgte_timer != vejledende_timer:
-                st.warning(f"OBS: Du har manuelt ændret tiden fra de vejledende {vejledende_timer} timer til {valgte_timer} timer.")
+            st.caption(f"SUM Reservedele inkluderer {avance}% avance på {ordretype}-priser.")
 
     except Exception as e:
         st.error(f"Fejl: {e}")
