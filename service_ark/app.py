@@ -47,69 +47,66 @@ else:
         if interval_kolonner:
             valgt_interval = st.selectbox("Vælg Service Interval", interval_kolonner)
             
-            # Rens interval kolonne
+            # Find rækker der er markeret i det valgte interval
             df[valgt_interval] = df[valgt_interval].astype(str).replace(['nan', 'None', 'nan '], '').str.strip()
             dele_fundet = df[df[valgt_interval] != ""].copy()
 
             if not dele_fundet.empty:
-                # Hjælpefunktion til tal-rens
+                # Hjælpefunktion til tal
                 def rens_til_tal(serie):
                     return pd.to_numeric(serie.astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False), errors='coerce').fillna(0)
 
-                # Forbered priser og mængder
-                dele_fundet['Mængde_Excel'] = dele_fundet[valgt_interval]
+                # Beregn priser
+                # Vi bruger 'Antal' kolonnen fra Excel til selve mængden nu
+                dele_fundet['Antal_Tal'] = pd.to_numeric(dele_fundet['Antal'].astype(str).str.replace(',', '.'), errors='coerce').fillna(1)
                 dele_fundet['Pris_Pr_Enhed'] = rens_til_tal(dele_fundet[ordretype])
-                
-                # Beregn linjetotal (håndterer 'x' som 1)
-                antal_numerisk = pd.to_numeric(dele_fundet[valgt_interval].str.replace(',', '.'), errors='coerce').fillna(1)
-                dele_fundet['Linje_Total'] = antal_numerisk * dele_fundet['Pris_Pr_Enhed'] * (1 + avance/100)
+                dele_fundet['Linje_Total'] = dele_fundet['Antal_Tal'] * dele_fundet['Pris_Pr_Enhed'] * (1 + avance/100)
 
-                # Find sektions-indekser
+                # Find sektioner
                 vaesker_idx = df[df[beskrivelse_kol].astype(str).str.contains('Væsker', case=False, na=False)].index
                 diverse_idx = df[df[beskrivelse_kol].astype(str).str.contains('Diverse', case=False, na=False)].index
                 v_start = vaesker_idx[0] if len(vaesker_idx) > 0 else 9999
                 d_start = diverse_idx[0] if len(diverse_idx) > 0 else 9999
 
-                # --- SEKTION 1: RESERVEDELE ---
-                hoved = dele_fundet[dele_fundet.index < v_start]
-                if not hoved.empty:
-                    st.markdown("#### Filtre og Reservedele")
-                    # Vi fjerner en eventuel eksisterende 'Antal' kolonne for at undgå dubletter
-                    kol_til_visning = [beskrivelse_kol, 'Reservedelsnr.', ordretype]
-                    eksisterende_kol = [k for k in kol_til_visning if k in hoved.columns]
-                    st.dataframe(hoved[eksisterende_kol], use_container_width=True, hide_index=True)
-
-                # --- SEKTION 2 & 3: VÆSKER & DIVERSE ---
-                def vis_special_sektion(titel, data, pris_label):
+                # --- FUNKTION TIL AT VISE TABELLER SOM PÅ BILLEDET ---
+                def vis_tabel_layout(titel, data, info_tekst=None):
                     if not data.empty:
                         st.markdown(f"#### {titel}")
-                        vis_df = data.copy()
                         
-                        # Vi opretter de nye kolonner specifikt
-                        vis_df['Antal_Visning'] = vis_df['Mængde_Excel']
-                        vis_df['Info_Tekst'] = "Foreslået salgspris fra Univar"
-                        
-                        # Vi vælger kun de kolonner vi skal bruge og giver dem pæne navne
-                        # På denne måde undgår vi 'Duplicate column names'
-                        final_df = pd.DataFrame({
-                            beskrivelse_kol: vis_df[beskrivelse_kol],
-                            'Antal': vis_df['Antal_Visning'],
-                            'Info': vis_df['Info_Tekst'],
-                            pris_label: vis_df[ordretype]
+                        # Vi bygger tabellen præcis som dit billede: Beskrivelse, Nr, Antal, Pris
+                        vis_data = pd.DataFrame({
+                            beskrivelse_kol: data[beskrivelse_kol],
+                            'Reservedelsnr.': data['Reservedelsnr.'],
+                            'Antal': data['Antal'], # Her tager vi den rå værdi fra din kolonne C
+                            'Pris': data[ordretype]
                         })
-                        st.dataframe(final_df, use_container_width=True, hide_index=True)
+                        
+                        # Hvis det er væsker/diverse, tilføjer vi info-kolonnen
+                        if info_tekst:
+                            vis_data['Info'] = info_tekst
+                        
+                        st.dataframe(vis_data, use_container_width=True, hide_index=True)
 
-                vaesker = dele_fundet[(dele_fundet.index > v_start) & (dele_fundet.index < d_start)]
-                vis_special_sektion("Væsker (Olie, kølervæske osv.)", vaesker, "Pris pr. liter")
+                # Opdel og vis
+                hoved_dele = dele_fundet[dele_fundet.index < v_start]
+                vaesker_dele = dele_fundet[(dele_fundet.index > v_start) & (dele_fundet.index < d_start)]
+                diverse_dele = dele_fundet[dele_fundet.index > d_start]
 
-                diverse = dele_fundet[dele_fundet.index > d_start]
-                vis_special_sektion("Diverse", diverse, "Pris pr. enhed")
+                st.subheader(f"Serviceoversigt: {model_valg} ved {valgt_interval}")
+                
+                vis_tabel_layout("Filtre og Reservedele", hoved_dele)
+                vis_tabel_layout("Væsker (Olie, kølervæske osv.)", vaesker_dele, "Foreslået salgspris fra Univar")
+                vis_tabel_layout("Diverse", diverse_dele, "Foreslået salgspris fra Univar")
 
                 # TOTAL
                 st.divider()
                 total_sum = dele_fundet['Linje_Total'].sum()
                 st.metric(f"Samlet pris (Ekskl. moms)", f"{total_sum:,.2f} DKK")
-                st.caption(f"Beregnet ud fra {ordretype}-priser med {avance}% avance.")
-        
+                st.caption(f"Beregnet på {ordretype}-priser med {avance}% avance.")
+            else:
+                st.info(f"Ingen dele markeret i {valgt_interval}")
+        else:
+            st.warning("Kunne ikke finde service-intervaller i filen.")
+
     except Exception as e:
-        st.error(f"Der opstod en fejl: {e}")
+        st.error(f"Fejl: {e}")
