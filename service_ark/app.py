@@ -30,7 +30,6 @@ else:
     valgt_fil = os.path.join(nuværende_mappe, f"{model_valg}.csv")
 
     try:
-        # 1. Indlæs data
         raw_df = pd.read_csv(valgt_fil, sep=';', encoding='latin-1', header=None)
         header_row_index = 0
         for i, row in raw_df.iterrows():
@@ -52,41 +51,47 @@ else:
                 if pd.isna(val): return 0.0
                 s = "".join(c for c in str(val) if c.isdigit() or c in ",.")
                 s = s.replace(',', '.').strip()
-                try:
-                    return float(s)
-                except:
-                    return 0.0
+                try: return float(s)
+                except: return 0.0
 
-            # Find sektions-indekser
+            # Find sektioner
             v_idx = df[df[beskrivelse_kol].astype(str).str.contains('Væsker', case=False, na=False)].index
             d_idx = df[df[beskrivelse_kol].astype(str).str.contains('Diverse', case=False, na=False)].index
             v_start = v_idx[0] if len(v_idx) > 0 else 9999
             d_start = d_idx[0] if len(d_idx) > 0 else 9999
 
-            df['er_skjult'] = df[beskrivelse_kol].astype(str).str.strip().str.lower().isin(["none", "nan", "unnamed", ""])
-
             # --- DATA OPSAMLING ---
             df['markeret'] = df[valgt_interval].astype(str).replace(['nan', 'None'], '').str.strip() != ""
             
-            # 1. SUM RESERVEDELE (Filtre osv.)
-            hoved = df[(df.index < v_start) & (df['markeret']) & (~df['er_skjult'])].copy()
+            # Reservedele (Før Væsker)
+            hoved = df[(df.index < v_start) & (df['markeret'])].copy()
+            hoved = hoved[~hoved[beskrivelse_kol].astype(str).str.strip().str.lower().isin(["none", "nan", ""])]
             
-            # 2. VÆSKER
-            vaesker = df[(df.index > v_start) & (df.index < d_start) & (df['markeret']) & (~df['er_skjult'])].copy()
+            # Væsker (Mellem Væsker og Diverse)
+            vaesker = df[(df.index > v_start) & (df.index < d_start) & (df['markeret'])].copy()
+            vaesker = vaesker[~vaesker[beskrivelse_kol].astype(str).str.strip().str.lower().isin(["none", "nan", ""])]
             
-            # 3. DIVERSE
+            # DIVERSE (Alt fra d_start og ned)
             diverse_sektion = df[df.index >= d_start].copy()
-            diverse = diverse_sektion[(~diverse_sektion['er_skjult'])].copy()
-            diverse['pris_tjek'] = diverse[pris_kol_h].apply(rens_til_tal)
-            diverse = diverse[(diverse['pris_tjek'] > 0) & (~diverse[beskrivelse_kol].astype(str).str.contains('^diverse$', case=False, na=False))].copy()
+            
+            def filtrer_diverse(row):
+                navn = str(row[beskrivelse_kol]).strip().lower()
+                pris = rens_til_tal(row[pris_kol_h])
+                # Skjul hvis det er "None" eller tom
+                if navn in ["none", "nan", ""]: return False
+                # Hvis rækken hedder "diverse", så tag den KUN med hvis der er en pris > 0
+                if navn == "diverse" and pris <= 0: return False
+                return pris > 0
 
-            # --- ARBEJDSTIMER (Sidebar styring) ---
+            mask_diverse = diverse_sektion.apply(filtrer_diverse, axis=1)
+            diverse = diverse_sektion[mask_diverse].copy()
+
+            # --- ARBEJDSTIMER ---
             st.sidebar.divider()
             mask_arbejd = df[beskrivelse_kol].astype(str).str.contains('Arbejd', case=False, na=False)
             vejledende_timer = 0.0
             if mask_arbejd.any():
-                timer_raw = df[mask_arbejd][valgt_interval].values[0]
-                vejledende_timer = rens_til_tal(timer_raw)
+                vejledende_timer = rens_til_tal(df[mask_arbejd][valgt_interval].values[0])
 
             valgte_timer = st.sidebar.number_input(f"Arbejdstimer ({valgt_interval})", value=float(vejledende_timer), step=0.5)
             arbejd_total = valgte_timer * timepris
@@ -109,49 +114,26 @@ else:
 
             if not hoved.empty:
                 st.markdown("#### Filtre og Reservedele")
-                st.dataframe(pd.DataFrame({
-                    beskrivelse_kol: hoved[beskrivelse_kol],
-                    'Reservedelsnr.': hoved['Reservedelsnr.'],
-                    'Enhedspris': hoved['Enhed_Tal'].map("{:,.2f}".format),
-                    'Antal': hoved['Antal'],
-                    'Total (inkl. avance)': hoved['Total_Tal'].map("{:,.2f} DKK".format)
-                }), use_container_width=True, hide_index=True)
+                st.dataframe(hoved[[beskrivelse_kol, 'Reservedelsnr.', 'Enhed_Tal', 'Antal', 'Total_Tal']].rename(columns={'Enhed_Tal': 'Enhedspris', 'Total_Tal': 'Total (inkl. avance)'}), use_container_width=True, hide_index=True)
 
             if not vaesker.empty:
-                st.markdown("#### Væsker (Olie, kølervæske osv.)")
-                st.dataframe(pd.DataFrame({
-                    beskrivelse_kol: vaesker[beskrivelse_kol],
-                    'Foreslået pris': vaesker['Enhed_Tal'].map("{:,.2f}".format),
-                    'Antal': vaesker['Antal'],
-                    'Total': vaesker['Total_Tal'].map("{:,.2f} DKK".format)
-                }), use_container_width=True, hide_index=True)
+                st.markdown("#### Væsker")
+                st.dataframe(vaesker[[beskrivelse_kol, 'Enhed_Tal', 'Antal', 'Total_Tal']].rename(columns={'Enhed_Tal': 'Foreslået pris', 'Total_Tal': 'Total'}), use_container_width=True, hide_index=True)
 
             if not diverse.empty:
                 st.markdown("#### Diverse")
-                st.dataframe(pd.DataFrame({
-                    beskrivelse_kol: diverse[beskrivelse_kol],
-                    'Foreslået pris': diverse['Enhed_Tal'].map("{:,.2f}".format),
-                    'Antal': diverse['Antal'],
-                    'Total': diverse['Total_Tal'].map("{:,.2f} DKK".format)
-                }), use_container_width=True, hide_index=True)
+                st.dataframe(diverse[[beskrivelse_kol, 'Enhed_Tal', 'Antal', 'Total_Tal']].rename(columns={'Enhed_Tal': 'Foreslået pris', 'Total_Tal': 'Total'}), use_container_width=True, hide_index=True)
 
-            # --- TOTALER MED SUM RESERVEDELE ---
+            # --- TOTALER ---
             st.divider()
             sum_reservedele = hoved['Total_Tal'].sum() if not hoved.empty else 0
-            sum_vaesker_diverse = (vaesker['Total_Tal'].sum() if not vaesker.empty else 0) + (diverse['Total_Tal'].sum() if not diverse.empty else 0)
+            sum_v_d = (vaesker['Total_Tal'].sum() if not vaesker.empty else 0) + (diverse['Total_Tal'].sum() if not diverse.empty else 0)
             
             c1, c2, c3, c4 = st.columns(4)
-            with c1:
-                st.metric("SUM Reservedele", f"{sum_reservedele:,.2f} DKK")
-            with c2:
-                st.metric("Væsker & Diverse", f"{sum_vaesker_diverse:,.2f} DKK")
-            with c3:
-                st.metric("Arbejdsløn", f"{arbejd_total:,.2f} DKK")
-            with c4:
-                total_alt = sum_reservedele + sum_vaesker_diverse + arbejd_total
-                st.metric("SAMLET TOTAL", f"{total_alt:,.2f} DKK")
-
-            st.caption(f"SUM Reservedele inkluderer {avance}% avance på {ordretype}-priser.")
+            with c1: st.metric("SUM Reservedele", f"{sum_reservedele:,.2f} DKK")
+            with c2: st.metric("Væsker & Diverse", f"{sum_v_d:,.2f} DKK")
+            with c3: st.metric("Arbejdsløn", f"{arbejd_total:,.2f} DKK")
+            with c4: st.metric("SAMLET TOTAL", f"{(sum_reservedele + sum_v_d + arbejd_total):,.2f} DKK")
 
     except Exception as e:
         st.error(f"Fejl: {e}")
