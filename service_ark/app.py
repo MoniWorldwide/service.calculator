@@ -23,6 +23,10 @@ else:
     # --- SIDEBAR ---
     st.sidebar.header("Indstillinger")
     model_valg = st.sidebar.selectbox("Vælg Traktormodel", sorted(modeller))
+    
+    # Genindsat: Mulighed for at taste egen timepris
+    timepris = st.sidebar.number_input("Din værkstedstimepris (DKK)", value=750)
+    
     ordretype = st.sidebar.radio("Vælg Ordretype (Pris)", ["Brutto", "Haste", "Uge", "Måned"])
     avance = st.sidebar.slider("Avance på dele (%)", 0, 50, 0)
 
@@ -103,8 +107,8 @@ else:
                 # TOTAL
                 st.divider()
                 total_sum = dele_fundet['Linje_Total'].sum()
-                st.metric("Samlet pris (Ekskl. moms)", f"{total_sum:,.2f} DKK")
-                st.caption(f"Beregnet ud fra {ordretype}-priser med {avance}% avance.")
+                st.metric("Samlet pris for dele (Ekskl. moms)", f"{total_sum:,.2f} DKK")
+                st.caption(f"Beregnet ud fra {ordretype}-priser med {avance}% avance og en timepris på {timepris} DKK.")
             else:
                 st.info(f"Ingen markeringer fundet for {valgt_interval}")
         else:
