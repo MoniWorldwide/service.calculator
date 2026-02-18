@@ -2,15 +2,25 @@ import streamlit as st
 import pandas as pd
 import os
 
+# Konfiguration af siden
 st.set_page_config(page_title="Deutz-Fahr Serviceberegner", layout="wide")
 
-# Logo og Titel
-col1, col2 = st.columns([1, 4])
+# --- TOP SEKTION: LOGO OG TITEL ---
+col1, col2 = st.columns([1, 3])
 with col1:
-    if os.path.exists("logo.png"):
-        st.image("logo.png", width=150)
+    # Vi tjekker efter de mest gængse filnavne for logoer
+    logo_path = "logo.png" 
+    if os.path.exists(logo_path):
+        st.image(logo_path, width=200)
+    else:
+        # Hvis logoet ikke findes, viser vi en flot rød tekst som backup
+        st.markdown("<h1 style='color: #d32f2f; margin: 0;'>DEUTZ-FAHR</h1>", unsafe_allow_html=True)
+
 with col2:
-    st.title("Deutz-Fahr Serviceberegner")
+    st.markdown("<h1 style='margin-bottom: 0;'>Serviceberegner</h1>", unsafe_allow_html=True)
+    st.markdown("<p style='font-style: italic; color: gray;'>Professionel prissætning og serviceoverblik</p>", unsafe_allow_html=True)
+
+st.divider()
 
 # Find filer
 nuværende_mappe = os.path.dirname(__file__)
@@ -18,18 +28,21 @@ filer_i_mappe = [f for f in os.listdir(nuværende_mappe) if f.endswith('.csv')]
 modeller = [f.replace('.csv', '') for f in filer_i_mappe]
 
 if not modeller:
-    st.error("Ingen data fundet.")
+    st.error("Ingen data fundet. Sørg for at dine .csv filer ligger i samme mappe som app.py")
 else:
-    # --- SIDEBAR ---
+    # --- SIDEBAR: BRUGER-INPUT ---
     st.sidebar.header("Indstillinger")
     model_valg = st.sidebar.selectbox("Vælg Traktormodel", sorted(modeller))
-    timepris = st.sidebar.number_input("Din værkstedstimepris (DKK)", value=750)
+    
+    st.sidebar.divider()
+    timepris = st.sidebar.number_input("Din værkstedstimepris (DKK)", value=750, step=25)
     ordretype = st.sidebar.radio("Vælg Ordretype (Pris for filtre)", ["Brutto", "Haste", "Uge", "Måned"])
     avance = st.sidebar.slider("Avance på RESERVEDELE (%)", 0, 50, 0)
 
     valgt_fil = os.path.join(nuværende_mappe, f"{model_valg}.csv")
 
     try:
+        # 1. Indlæs rå data for at finde header
         raw_df = pd.read_csv(valgt_fil, sep=';', encoding='latin-1', header=None)
         header_row_index = 0
         for i, row in raw_df.iterrows():
@@ -37,10 +50,11 @@ else:
                 header_row_index = i
                 break
         
+        # 2. Indlæs data korrekt
         df = pd.read_csv(valgt_fil, sep=';', encoding='latin-1', header=header_row_index)
         df.columns = [str(c).strip() for c in df.columns]
         beskrivelse_kol = df.columns[0]
-        pris_kol_h = df.columns[7]
+        pris_kol_h = df.columns[7] # Kolonne H
         
         interval_kolonner = [c for c in df.columns if "timer" in c.lower()]
         
@@ -54,39 +68,35 @@ else:
                 try: return float(s)
                 except: return 0.0
 
-            # Find sektioner
+            # Find sektions-indekser
             v_idx = df[df[beskrivelse_kol].astype(str).str.contains('Væsker', case=False, na=False)].index
             d_idx = df[df[beskrivelse_kol].astype(str).str.contains('Diverse', case=False, na=False)].index
             v_start = v_idx[0] if len(v_idx) > 0 else 9999
             d_start = d_idx[0] if len(d_idx) > 0 else 9999
 
-            # --- DATA OPSAMLING ---
+            # --- DATA OPSAMLING OG FILTRERING ---
             df['markeret'] = df[valgt_interval].astype(str).replace(['nan', 'None'], '').str.strip() != ""
             
-            # Reservedele (Før Væsker)
+            # Reservedele
             hoved = df[(df.index < v_start) & (df['markeret'])].copy()
             hoved = hoved[~hoved[beskrivelse_kol].astype(str).str.strip().str.lower().isin(["none", "nan", ""])]
             
-            # Væsker (Mellem Væsker og Diverse)
+            # Væsker
             vaesker = df[(df.index > v_start) & (df.index < d_start) & (df['markeret'])].copy()
             vaesker = vaesker[~vaesker[beskrivelse_kol].astype(str).str.strip().str.lower().isin(["none", "nan", ""])]
             
-            # DIVERSE (Alt fra d_start og ned)
+            # Diverse (inkluderer punktet "Diverse" hvis det har en pris)
             diverse_sektion = df[df.index >= d_start].copy()
-            
-            def filtrer_diverse(row):
+            def filter_diverse(row):
                 navn = str(row[beskrivelse_kol]).strip().lower()
                 pris = rens_til_tal(row[pris_kol_h])
-                # Skjul hvis det er "None" eller tom
                 if navn in ["none", "nan", ""]: return False
-                # Hvis rækken hedder "diverse", så tag den KUN med hvis der er en pris > 0
                 if navn == "diverse" and pris <= 0: return False
                 return pris > 0
+            
+            diverse = diverse_sektion[diverse_sektion.apply(filter_diverse, axis=1)].copy()
 
-            mask_diverse = diverse_sektion.apply(filtrer_diverse, axis=1)
-            diverse = diverse_sektion[mask_diverse].copy()
-
-            # --- ARBEJDSTIMER ---
+            # --- ARBEJDSTIMER I SIDEBAR ---
             st.sidebar.divider()
             mask_arbejd = df[beskrivelse_kol].astype(str).str.contains('Arbejd', case=False, na=False)
             vejledende_timer = 0.0
@@ -113,15 +123,15 @@ else:
             st.subheader(f"Serviceoversigt: {model_valg} - {valgt_interval}")
 
             if not hoved.empty:
-                st.markdown("#### Filtre og Reservedele")
+                st.markdown("#### 🛠️ Filtre og Reservedele")
                 st.dataframe(hoved[[beskrivelse_kol, 'Reservedelsnr.', 'Enhed_Tal', 'Antal', 'Total_Tal']].rename(columns={'Enhed_Tal': 'Enhedspris', 'Total_Tal': 'Total (inkl. avance)'}), use_container_width=True, hide_index=True)
 
             if not vaesker.empty:
-                st.markdown("#### Væsker")
+                st.markdown("#### 🛢️ Væsker")
                 st.dataframe(vaesker[[beskrivelse_kol, 'Enhed_Tal', 'Antal', 'Total_Tal']].rename(columns={'Enhed_Tal': 'Foreslået pris', 'Total_Tal': 'Total'}), use_container_width=True, hide_index=True)
 
             if not diverse.empty:
-                st.markdown("#### Diverse")
+                st.markdown("#### 📦 Diverse")
                 st.dataframe(diverse[[beskrivelse_kol, 'Enhed_Tal', 'Antal', 'Total_Tal']].rename(columns={'Enhed_Tal': 'Foreslået pris', 'Total_Tal': 'Total'}), use_container_width=True, hide_index=True)
 
             # --- TOTALER ---
@@ -133,7 +143,10 @@ else:
             with c1: st.metric("SUM Reservedele", f"{sum_reservedele:,.2f} DKK")
             with c2: st.metric("Væsker & Diverse", f"{sum_v_d:,.2f} DKK")
             with c3: st.metric("Arbejdsløn", f"{arbejd_total:,.2f} DKK")
-            with c4: st.metric("SAMLET TOTAL", f"{(sum_reservedele + sum_v_d + arbejd_total):,.2f} DKK")
+            with c4: 
+                total_alt = sum_reservedele + sum_v_d + arbejd_total
+                st.markdown(f"### TOTAL: {total_alt:,.2f} DKK")
+                st.caption("Priser er ekskl. moms")
 
     except Exception as e:
         st.error(f"Fejl: {e}")
