@@ -6,22 +6,18 @@ import os
 st.set_page_config(page_title="Deutz-Fahr Serviceberegner", layout="wide")
 
 # --- STYRING AF MAPPER ---
-# Vi definerer at dine filer ligger i mappen 'service_ark'
 DATA_MAPPE = "service_ark"
 
 # --- TOP SEKTION: LOGO OG TITEL ---
 col1, col2 = st.columns([1, 3])
 with col1:
-    # Vi leder efter logoet inde i service_ark mappen
     logo_path = os.path.join(DATA_MAPPE, "logo.png")
     if os.path.exists(logo_path):
         st.image(logo_path, width=200)
     else:
-        # Hvis logoet ikke findes (backup)
         st.markdown("<h1 style='color: #d32f2f; margin: 0;'>DEUTZ-FAHR</h1>", unsafe_allow_html=True)
 
 with col2:
-    # Overskrift med Deutz-Fahr Grøn farve (#367c2b)
     st.markdown("<h1 style='margin-bottom: 0; color: #367c2b;'>Serviceberegner</h1>", unsafe_allow_html=True)
     st.markdown("<p style='font-style: italic; color: gray;'>Officielt serviceoverblik og prissætning</p>", unsafe_allow_html=True)
 
@@ -29,18 +25,25 @@ st.divider()
 
 # Find filer i service_ark mappen
 if not os.path.exists(DATA_MAPPE):
-    st.error(f"Mappen '{DATA_MAPPE}' blev ikke fundet. Sørg for at den findes på GitHub.")
+    st.error(f"Mappen '{DATA_MAPPE}' blev ikke fundet.")
     modeller = []
 else:
     filer_i_mappe = [f for f in os.listdir(DATA_MAPPE) if f.endswith('.csv')]
-    modeller = [f.replace('.csv', '') for f in filer_i_mappe]
+    # Vi gemmer de rå navne (filnavne) til at læse filen, men viser dem med Deutz-Fahr foran
+    modeller_raw = sorted([f.replace('.csv', '') for f in filer_i_mappe])
 
-if not modeller:
+if not modeller_raw:
     st.warning("Ingen CSV-filer fundet i 'service_ark' mappen.")
 else:
     # --- SIDEBAR ---
     st.sidebar.header("Indstillinger")
-    model_valg = st.sidebar.selectbox("Vælg Traktormodel", sorted(modeller))
+    
+    # Her tilføjer vi "Deutz-Fahr " foran hver model i oversigten
+    model_visning = {f"Deutz-Fahr {m}": m for m in modeller_raw}
+    valgt_visningsnavn = st.sidebar.selectbox("Vælg Traktormodel", list(model_visning.keys()))
+    
+    # Find det rå filnavn baseret på valget
+    model_valg = model_visning[valgt_visningsnavn]
     
     st.sidebar.divider()
     timepris = st.sidebar.number_input("Din værkstedstimepris (DKK)", value=750, step=25)
@@ -50,7 +53,6 @@ else:
     valgt_fil = os.path.join(DATA_MAPPE, f"{model_valg}.csv")
 
     try:
-        # Indlæs data
         raw_df = pd.read_csv(valgt_fil, sep=';', encoding='latin-1', header=None)
         header_row_index = 0
         for i, row in raw_df.iterrows():
@@ -75,7 +77,7 @@ else:
                 try: return float(s)
                 except: return 0.0
 
-            # Sektioner
+            # Find sektioner
             v_idx = df[df[beskrivelse_kol].astype(str).str.contains('Væsker', case=False, na=False)].index
             d_idx = df[df[beskrivelse_kol].astype(str).str.contains('Diverse', case=False, na=False)].index
             v_start = v_idx[0] if len(v_idx) > 0 else 9999
@@ -84,15 +86,12 @@ else:
             # --- DATA OPSAMLING ---
             df['markeret'] = df[valgt_interval].astype(str).replace(['nan', 'None'], '').str.strip() != ""
             
-            # Reservedele (Filtre)
             hoved = df[(df.index < v_start) & (df['markeret'])].copy()
             hoved = hoved[~hoved[beskrivelse_kol].astype(str).str.strip().str.lower().isin(["none", "nan", ""])]
             
-            # Væsker
             vaesker = df[(df.index > v_start) & (df.index < d_start) & (df['markeret'])].copy()
             vaesker = vaesker[~vaesker[beskrivelse_kol].astype(str).str.strip().str.lower().isin(["none", "nan", ""])]
             
-            # DIVERSE (Inkluderer den specifikke "Diverse" række på 500 kr)
             diverse_sektion = df[df.index >= d_start].copy()
             def filter_diverse(row):
                 navn = str(row[beskrivelse_kol]).strip().lower()
@@ -127,7 +126,8 @@ else:
             diverse = apply_calc(diverse, pris_kol_h)
 
             # --- VISNING ---
-            st.subheader(f"Serviceoversigt: {model_valg} - {valgt_interval}")
+            # Her bruger vi det fulde visningsnavn i overskriften
+            st.subheader(f"{valgt_visningsnavn} - {valgt_interval}")
 
             if not hoved.empty:
                 st.markdown("<h4 style='color: #367c2b;'>🛠️ Filtre og Reservedele</h4>", unsafe_allow_html=True)
@@ -146,7 +146,6 @@ else:
             sum_reservedele = hoved['Total_Tal'].sum() if not hoved.empty else 0
             sum_v_d = (vaesker['Total_Tal'].sum() if not vaesker.empty else 0) + (diverse['Total_Tal'].sum() if not diverse.empty else 0)
             
-            # Styling af totalerne
             c1, c2, c3, c4 = st.columns(4)
             with c1: st.metric("SUM Reservedele", f"{sum_reservedele:,.2f} DKK")
             with c2: st.metric("Væsker & Diverse", f"{sum_v_d:,.2f} DKK")
