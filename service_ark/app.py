@@ -7,7 +7,7 @@ st.set_page_config(page_title="Deutz-Fahr Serviceberegner", layout="wide")
 
 # --- STYRING AF MAPPER OG KONSTANTER ---
 DATA_MAPPE = "service_ark"
-FAST_DIVERSE_GEBYR = 500.0  # Din faste omkostning pr. serviceinterval
+FAST_DIVERSE_GEBYR = 500.0 
 
 # --- TOP SEKTION: LOGO OG TITEL ---
 col1, col2 = st.columns([1, 3])
@@ -35,7 +35,7 @@ else:
 if not modeller_raw:
     st.warning("Ingen CSV-filer fundet.")
 else:
-    # --- SIDEBAR INDSTILLINGER ---
+    # --- SIDEBAR ---
     st.sidebar.header("Indstillinger")
     model_visning = {f"Deutz-Fahr {m}": m for m in modeller_raw}
     valgt_visningsnavn = st.sidebar.selectbox("Vælg Traktormodel", list(model_visning.keys()))
@@ -49,7 +49,6 @@ else:
     valgt_fil = os.path.join(DATA_MAPPE, f"{model_valg}.csv")
 
     try:
-        # Indlæs data
         raw_df = pd.read_csv(valgt_fil, sep=';', encoding='latin-1', header=None)
         header_row_index = 0
         for i, row in raw_df.iterrows():
@@ -73,109 +72,106 @@ else:
         if interval_kolonner:
             valgt_interval = st.selectbox("Vælg serviceinterval", interval_kolonner)
             
-            # --- ARBEJDSTIMER INPUT (SIDEBAR) ---
+            # Arbejdsløn input
             mask_arbejd = df[beskrivelse_kol].astype(str).str.contains('Arbejd', case=False, na=False)
-            vejledende_timer = 0.0
-            if mask_arbejd.any():
-                vejledende_timer = rens_til_tal(df[mask_arbejd][valgt_interval].values[0])
-            
+            vejledende_timer = rens_til_tal(df[mask_arbejd][valgt_interval].values[0]) if mask_arbejd.any() else 0.0
             st.sidebar.divider()
-            valgte_arbejdstimer = st.sidebar.number_input(f"Arbejdstimer for {valgt_interval}", value=float(vejledende_timer), step=0.5)
+            valgte_arbejdstimer = st.sidebar.number_input(f"Arbejdstimer ({valgt_interval})", value=float(vejledende_timer), step=0.5)
 
             # --- AKKUMULERET BEREGNING ---
-            try:
-                valgt_timer_tal = int("".join(filter(str.isdigit, valgt_interval)))
-                forudgaaende_intervaller = []
-                for col in interval_kolonner:
-                    col_timer = int("".join(filter(str.isdigit, col)))
-                    if col_timer <= valgt_timer_tal:
-                        forudgaaende_intervaller.append(col)
-            except:
-                valgt_timer_tal = 1
-                forudgaaende_intervaller = [valgt_interval]
+            valgt_timer_tal = int("".join(filter(str.isdigit, valgt_interval)))
+            forudgaaende_intervaller = [col for col in interval_kolonner if int("".join(filter(str.isdigit, col))) <= valgt_timer_tal]
 
             v_idx = df[df[beskrivelse_kol].astype(str).str.contains('Væsker', case=False, na=False)].index
             v_start = v_idx[0] if len(v_idx) > 0 else 9999
+            d_idx = df[df[beskrivelse_kol].astype(str).str.contains('Diverse', case=False, na=False)].index
+            d_start = d_idx[0] if len(d_idx) > 0 else 9999
 
-            total_akkumuleret_res = 0.0
-            total_akkumuleret_vd = 0.0
-            total_akkumuleret_arbejd = 0.0
+            tot_res = 0.0
+            tot_vd = 0.0
+            tot_arb = 0.0
 
             for interval in forudgaaende_intervaller:
                 m_mask = df[interval].astype(str).replace(['nan', 'None', ''], None).notna()
                 
-                # Reservedele
-                res_part = df[(df.index < v_start) & m_mask].copy()
-                total_akkumuleret_res += (res_part[ordretype].apply(rens_til_tal) * res_part['Antal'].apply(rens_til_tal) * (1 + avance/100)).sum()
+                # Res
+                res_p = df[(df.index < v_start) & m_mask].copy()
+                tot_res += (res_p[ordretype].apply(rens_til_tal) * res_p['Antal'].apply(rens_til_tal) * (1 + avance/100)).sum()
                 
-                # Væsker & Excel-diverse
-                vd_part = df[(df.index > v_start) & m_mask].copy()
-                vd_part = vd_part[~vd_part[beskrivelse_kol].astype(str).str.strip().str.lower().isin(["none", "nan", "", "diverse"])]
-                total_akkumuleret_vd += (vd_part[pris_kol_h].apply(rens_til_tal) * vd_part['Antal'].apply(rens_til_tal)).sum()
-                
-                # Arbejdsløn (Brug brugerinput for det valgte interval, ellers Excel-tal for de forudgående)
-                if interval == valgt_interval:
-                    total_akkumuleret_arbejd += (valgte_arbejdstimer * timepris)
-                else:
-                    if mask_arbejd.any():
-                        t_timer = rens_til_tal(df[mask_arbejd][interval].values[0])
-                        total_akkumuleret_arbejd += (t_timer * timepris)
+                # Væsker & Diverse fra Excel
+                vd_p = df[(df.index > v_start) & m_mask].copy()
+                vd_p = vd_p[~vd_p[beskrivelse_kol].astype(str).str.strip().str.lower().isin(["none", "nan", "", "diverse"])]
+                tot_vd += (vd_p[pris_kol_h].apply(rens_til_tal) * vd_part_antal_tjek if 'Antal' in vd_p.columns else 1).sum() # Forenklet logik
+                # Mere præcis opsamling af væsker/diverse priser
+                for _, r in vd_p.iterrows():
+                    tot_vd += rens_til_tal(r[pris_kol_h]) * rens_til_tal(r['Antal'])
 
-            # Læg de faste 500 kr. pr. interval til
-            total_akkumuleret_vd += (len(forudgaaende_intervaller) * FAST_DIVERSE_GEBYR)
+                # Arb
+                if interval == valgt_interval:
+                    tot_arb += (valgte_arbejdstimer * timepris)
+                elif mask_arbejd.any():
+                    tot_arb += (rens_til_tal(df[mask_arbejd][interval].values[0]) * timepris)
+
+            tot_vd += (len(forudgaaende_intervaller) * FAST_DIVERSE_GEBYR)
+            tot_alt = tot_res + tot_vd + tot_arb
+            pris_pr_t = tot_alt / valgt_timer_tal if valgt_timer_tal > 0 else 0
+
+            # --- FILTRERING AF TABELLER (DET VALGTE INTERVAL) ---
+            df['markeret'] = df[valgt_interval].astype(str).replace(['nan', 'None', ''], None).notna()
             
-            total_akkumuleret_alt = total_akkumuleret_res + total_akkumuleret_vd + total_akkumuleret_arbejd
-            pris_pr_time_akkumuleret = total_akkumuleret_alt / valgt_timer_tal if valgt_timer_tal > 0 else 0
+            # Filtre
+            hoved = df[(df.index < v_start) & (df['markeret'])].copy()
+            hoved = hoved[hoved[beskrivelse_kol].str.strip().str.lower().replace(['nan','none',''], None).notna()]
+            
+            # Væsker
+            vaesker = df[(df.index > v_start) & (df.index < d_start) & (df['markeret'])].copy()
+            vaesker = vaesker[vaesker[beskrivelse_kol].str.strip().str.lower().replace(['nan','none',''], None).notna()]
+            
+            # Diverse fra Excel
+            diverse_excel = df[(df.index >= d_start) & (df['markeret'])].copy()
+            diverse_excel = diverse_excel[diverse_excel[beskrivelse_kol].str.strip().str.lower().replace(['nan','none','diverse',''], None).notna()]
+            
+            # Sammensæt Diverse tabel (Fast gebyr + Excel poster)
+            diverse_list = [{beskrivelse_kol: "Fast diverse omkostning", 'Enhed_Tal': FAST_DIVERSE_GEBYR, 'Antal_Tal': 1.0, 'Total_Tal': FAST_DIVERSE_GEBYR}]
+            for _, row in diverse_excel.iterrows():
+                p = rens_til_tal(row[pris_kol_h])
+                a = rens_til_tal(row['Antal'])
+                diverse_list.append({beskrivelse_kol: row[beskrivelse_kol], 'Enhed_Tal': p, 'Antal_Tal': a, 'Total_Tal': p*a})
+            diverse_final = pd.DataFrame(diverse_list)
 
             # --- VISNING ---
-            st.subheader(f"{valgt_visningsnavn} - Detaljer for {valgt_interval}")
+            st.subheader(f"{valgt_visningsnavn} - {valgt_interval}")
             
-            # Tabeller (Kun for det valgte interval)
-            df['markeret'] = df[valgt_interval].astype(str).replace(['nan', 'None', ''], None).notna()
-            hoved = df[(df.index < v_start) & (df['markeret'])].copy()
-            vaesker = df[(df.index > v_start) & (df['markeret'])].copy()
-            vaesker = vaesker[~vaesker[beskrivelse_kol].astype(str).str.strip().str.lower().isin(["none", "nan", "", "diverse"])]
-
-            if not hoved[~hoved[beskrivelse_kol].astype(str).str.strip().str.lower().isin(["none", "nan", ""])].empty:
+            if not hoved.empty:
                 st.markdown("<h4 style='color: #367c2b;'>🛠️ Filtre og reservedele</h4>", unsafe_allow_html=True)
-                h_disp = hoved.copy()
-                h_disp['Enhed_Tal'] = h_disp[ordretype].apply(rens_til_tal) * (1 + avance/100)
-                h_disp['Total_Tal'] = h_disp['Enhed_Tal'] * h_disp['Antal'].apply(rens_til_tal)
-                st.dataframe(h_disp[[beskrivelse_kol, 'Reservedelsnr.', 'Enhed_Tal', 'Antal', 'Total_Tal']].rename(columns={'Enhed_Tal': 'Enhedspris', 'Total_Tal': 'Total'}), use_container_width=True, hide_index=True)
+                hoved['Enhedspris'] = hoved[ordretype].apply(rens_til_tal) * (1 + avance/100)
+                hoved['Total'] = hoved['Enhedspris'] * hoved['Antal'].apply(rens_til_tal)
+                st.dataframe(hoved[[beskrivelse_kol, 'Reservedelsnr.', 'Enhedspris', 'Antal', 'Total']], use_container_width=True, hide_index=True)
 
             if not vaesker.empty:
                 st.markdown("<h4 style='color: #367c2b;'>🛢️ Væsker</h4>", unsafe_allow_html=True)
                 st.info("Prisen på væsker er en foreslået salgspris fra Univar. Det anbefales at kontakte Univar for den dagsaktuelle pris.")
-                v_disp = vaesker.copy()
-                v_disp['Enhed_Tal'] = v_disp[pris_kol_h].apply(rens_til_tal)
-                v_disp['Total_Tal'] = v_disp['Enhed_Tal'] * v_disp['Antal'].apply(rens_til_tal)
-                st.dataframe(v_disp[[beskrivelse_kol, 'Enhed_Tal', 'Antal', 'Total_Tal']].rename(columns={'Enhed_Tal': 'Vejl. Univar pris', 'Total_Tal': 'Total'}), use_container_width=True, hide_index=True)
+                vaesker['Vejl. Univar pris'] = vaesker[pris_kol_h].apply(rens_til_tal)
+                vaesker['Total'] = vaesker['Vejl. Univar pris'] * vaesker['Antal'].apply(rens_til_tal)
+                st.dataframe(vaesker[[beskrivelse_kol, 'Vejl. Univar pris', 'Antal', 'Total']], use_container_width=True, hide_index=True)
 
             st.markdown("<h4 style='color: #367c2b;'>📦 Diverse</h4>", unsafe_allow_html=True)
-            st.dataframe(pd.DataFrame({beskrivelse_kol: ["Fast diverse omkostning"], 'Pris': [FAST_DIVERSE_GEBYR], 'Antal': [1.0], 'Total': [FAST_DIVERSE_GEBYR]}), use_container_width=True, hide_index=True)
+            st.dataframe(diverse_final.rename(columns={'Enhed_Tal': 'Pris', 'Antal_Tal': 'Antal', 'Total_Tal': 'Total'}), use_container_width=True, hide_index=True)
 
-            # --- AKKUMULERET TOTALER ---
+            # --- TOTALER ---
             st.divider()
             st.markdown(f"### Samlede akkumulerede omkostninger (0 - {valgt_timer_tal} timer)")
             c1, c2, c3, c4 = st.columns(4)
-            with c1: st.metric("Total Reservedele", f"{total_akkumuleret_res:,.2f} DKK")
-            with c2: st.metric("Total Væsker/Diverse", f"{total_akkumuleret_vd:,.2f} DKK")
-            with c3: st.metric("Total Arbejdsløn", f"{total_akkumuleret_arbejd:,.2f} DKK")
+            with c1: st.metric("Total Reservedele", f"{tot_res:,.2f} DKK")
+            with c2: st.metric("Total Væsker/Diverse", f"{tot_vd:,.2f} DKK")
+            with c3: st.metric("Total Arbejdsløn", f"{tot_arb:,.2f} DKK")
             with c4: 
                 st.markdown(f"<div style='background-color: #367c2b; padding: 10px; border-radius: 5px; color: white; text-align: center;'>"
-                            f"<small>AKKUMULERET TOTAL</small><br><strong><big>{total_akkumuleret_alt:,.2f} DKK</big></strong></div>", unsafe_allow_html=True)
+                            f"<small>AKKUMULERET TOTAL</small><br><strong><big>{tot_alt:,.2f} DKK</big></strong></div>", unsafe_allow_html=True)
 
-            # --- DRIFTSØKONOMI ---
-            st.markdown("<br>", unsafe_allow_html=True)
-            col_info, col_box = st.columns([2, 1])
-            with col_info:
-                st.markdown(f"### Reel serviceomkostning pr. driftstime")
-                st.write(f"Baseret på alle serviceomkostninger op til **{valgt_timer_tal} timer**.")
-            with col_box:
-                st.markdown(f"<div style='border: 2px solid #367c2b; padding: 15px; border-radius: 10px; text-align: center; background-color: #f9f9f9;'>"
-                            f"<span style='color: #555; font-size: 0.9em; font-weight: bold;'>REEL PRIS PR. DRIFTSTIME</span><br>"
-                            f"<span style='font-size: 1.6em; font-weight: bold; color: #367c2b;'>{pris_pr_time_akkumuleret:,.2f} DKK/t</span>"
-                            f"</div>", unsafe_allow_html=True)
+            st.markdown(f"<div style='margin-top:20px; border: 2px solid #367c2b; padding: 15px; border-radius: 10px; text-align: center; background-color: #f9f9f9;'>"
+                        f"<span style='color: #555; font-weight: bold;'>REEL PRIS PR. DRIFTSTIME (0-{valgt_timer_tal} t): </span>"
+                        f"<span style='font-size: 1.4em; font-weight: bold; color: #367c2b;'>{pris_pr_t:,.2f} DKK/t</span></div>", unsafe_allow_html=True)
 
     except Exception as e:
         st.error(f"Fejl: {e}")
