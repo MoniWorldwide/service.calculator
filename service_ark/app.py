@@ -26,10 +26,9 @@ st.divider()
 # Find filer i service_ark mappen
 if not os.path.exists(DATA_MAPPE):
     st.error(f"Mappen '{DATA_MAPPE}' blev ikke fundet.")
-    modeller = []
+    modeller_raw = []
 else:
     filer_i_mappe = [f for f in os.listdir(DATA_MAPPE) if f.endswith('.csv')]
-    # Vi gemmer de rå navne (filnavne) til at læse filen, men viser dem med Deutz-Fahr foran
     modeller_raw = sorted([f.replace('.csv', '') for f in filer_i_mappe])
 
 if not modeller_raw:
@@ -38,11 +37,8 @@ else:
     # --- SIDEBAR ---
     st.sidebar.header("Indstillinger")
     
-    # Her tilføjer vi "Deutz-Fahr " foran hver model i oversigten
     model_visning = {f"Deutz-Fahr {m}": m for m in modeller_raw}
     valgt_visningsnavn = st.sidebar.selectbox("Vælg Traktormodel", list(model_visning.keys()))
-    
-    # Find det rå filnavn baseret på valget
     model_valg = model_visning[valgt_visningsnavn]
     
     st.sidebar.divider()
@@ -77,7 +73,7 @@ else:
                 try: return float(s)
                 except: return 0.0
 
-            # Find sektioner
+            # Sektioner
             v_idx = df[df[beskrivelse_kol].astype(str).str.contains('Væsker', case=False, na=False)].index
             d_idx = df[df[beskrivelse_kol].astype(str).str.contains('Diverse', case=False, na=False)].index
             v_start = v_idx[0] if len(v_idx) > 0 else 9999
@@ -109,7 +105,7 @@ else:
                 vejledende_timer = rens_til_tal(df[mask_arbejd][valgt_interval].values[0])
 
             st.sidebar.divider()
-            valgte_timer = st.sidebar.number_input(f"Timer til {valgt_interval}", value=float(vejledende_timer), step=0.5)
+            valgte_timer = st.sidebar.number_input(f"Arbejdstimer ({valgt_interval})", value=float(vejledende_timer), step=0.5)
             arbejd_total = valgte_timer * timepris
 
             # --- BEREGNINGER ---
@@ -126,7 +122,6 @@ else:
             diverse = apply_calc(diverse, pris_kol_h)
 
             # --- VISNING ---
-            # Her bruger vi det fulde visningsnavn i overskriften
             st.subheader(f"{valgt_visningsnavn} - {valgt_interval}")
 
             if not hoved.empty:
@@ -145,15 +140,35 @@ else:
             st.divider()
             sum_reservedele = hoved['Total_Tal'].sum() if not hoved.empty else 0
             sum_v_d = (vaesker['Total_Tal'].sum() if not vaesker.empty else 0) + (diverse['Total_Tal'].sum() if not diverse.empty else 0)
+            total_alt = sum_reservedele + sum_v_d + arbejd_total
             
+            # Find antal kørte timer fra intervallets navn (f.eks. "1000 timer" -> 1000)
+            try:
+                interval_tal = float("".join(filter(str.isdigit, valgt_interval)))
+                pris_pr_time = total_alt / interval_tal if interval_tal > 0 else 0
+            except:
+                pris_pr_time = 0
+
             c1, c2, c3, c4 = st.columns(4)
             with c1: st.metric("SUM Reservedele", f"{sum_reservedele:,.2f} DKK")
             with c2: st.metric("Væsker & Diverse", f"{sum_v_d:,.2f} DKK")
             with c3: st.metric("Arbejdsløn", f"{arbejd_total:,.2f} DKK")
             with c4: 
-                total_alt = sum_reservedele + sum_v_d + arbejd_total
                 st.markdown(f"<div style='background-color: #367c2b; padding: 10px; border-radius: 5px; color: white; text-align: center;'>"
                             f"<small>SAMLET TOTAL (Ekskl. moms)</small><br><strong><big>{total_alt:,.2f} DKK</big></strong></div>", unsafe_allow_html=True)
+
+            # --- DRIFTSØKONOMI OVERSIGT ---
+            st.markdown("<br>", unsafe_allow_html=True)
+            col_info, col_box = st.columns([2, 1])
+            with col_info:
+                st.markdown(f"**Driftsøkonomi for dette service:**")
+                st.write(f"Når denne traktor kører til et **{valgt_interval}**, svarer den samlede serviceomkostning til en udgift pr. kørte time.")
+            
+            with col_box:
+                st.markdown(f"<div style='border: 2px solid #367c2b; padding: 15px; border-radius: 10px; text-align: center;'>"
+                            f"<span style='color: gray; font-size: 0.9em;'>SERVICEPRIS PR. TIME</span><br>"
+                            f"<span style='font-size: 1.5em; font-weight: bold; color: #367c2b;'>{pris_pr_time:,.2f} DKK/t</span>"
+                            f"</div>", unsafe_allow_html=True)
 
     except Exception as e:
         st.error(f"Fejl ved indlæsning af data: {e}")
