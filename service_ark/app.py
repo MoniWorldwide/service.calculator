@@ -19,7 +19,7 @@ with col1:
 
 with col2:
     st.markdown("<h1 style='margin-bottom: 0; color: #367c2b;'>Serviceberegner</h1>", unsafe_allow_html=True)
-    st.markdown("<p style='font-style: italic; color: gray;'>Officielt serviceoverblik og prissætning</p>", unsafe_allow_html=True)
+    st.markdown("<p style='font-style: italic; color: gray;'>Professionelt overblik over serviceomkostninger</p>", unsafe_allow_html=True)
 
 st.divider()
 
@@ -42,9 +42,9 @@ else:
     model_valg = model_visning[valgt_visningsnavn]
     
     st.sidebar.divider()
-    timepris = st.sidebar.number_input("Din værkstedstimepris (DKK)", value=750, step=25)
-    ordretype = st.sidebar.radio("Vælg Ordretype (Pris for filtre)", ["Brutto", "Haste", "Uge", "Måned"])
-    avance = st.sidebar.slider("Avance på RESERVEDELE (%)", 0, 50, 0)
+    timepris = st.sidebar.number_input("Værkstedstimepris (DKK)", value=750, step=25)
+    ordretype = st.sidebar.radio("Pristype for filtre", ["Brutto", "Haste", "Uge", "Måned"])
+    avance = st.sidebar.slider("Avance på reservedele (%)", 0, 50, 0)
 
     valgt_fil = os.path.join(DATA_MAPPE, f"{model_valg}.csv")
 
@@ -64,7 +64,7 @@ else:
         interval_kolonner = [c for c in df.columns if "timer" in c.lower()]
         
         if interval_kolonner:
-            valgt_interval = st.selectbox("Vælg Service Interval", interval_kolonner)
+            valgt_interval = st.selectbox("Vælg serviceinterval", interval_kolonner)
             
             def rens_til_tal(val):
                 if pd.isna(val): return 0.0
@@ -125,16 +125,17 @@ else:
             st.subheader(f"{valgt_visningsnavn} - {valgt_interval}")
 
             if not hoved.empty:
-                st.markdown("<h4 style='color: #367c2b;'>🛠️ Filtre og Reservedele</h4>", unsafe_allow_html=True)
+                st.markdown("<h4 style='color: #367c2b;'>🛠️ Filtre og reservedele</h4>", unsafe_allow_html=True)
                 st.dataframe(hoved[[beskrivelse_kol, 'Reservedelsnr.', 'Enhed_Tal', 'Antal', 'Total_Tal']].rename(columns={'Enhed_Tal': 'Enhedspris', 'Total_Tal': 'Total (inkl. avance)'}), use_container_width=True, hide_index=True)
 
             if not vaesker.empty:
                 st.markdown("<h4 style='color: #367c2b;'>🛢️ Væsker</h4>", unsafe_allow_html=True)
-                st.dataframe(vaesker[[beskrivelse_kol, 'Enhed_Tal', 'Antal', 'Total_Tal']].rename(columns={'Enhed_Tal': 'Foreslået pris', 'Total_Tal': 'Total'}), use_container_width=True, hide_index=True)
+                st.info("Prisen på væsker er en foreslået salgspris fra Univar. Det anbefales at kontakte Univar for den dagsaktuelle pris.")
+                st.dataframe(vaesker[[beskrivelse_kol, 'Enhed_Tal', 'Antal', 'Total_Tal']].rename(columns={'Enhed_Tal': 'Vejl. Univar pris', 'Total_Tal': 'Total'}), use_container_width=True, hide_index=True)
 
             if not diverse.empty:
                 st.markdown("<h4 style='color: #367c2b;'>📦 Diverse</h4>", unsafe_allow_html=True)
-                st.dataframe(diverse[[beskrivelse_kol, 'Enhed_Tal', 'Antal', 'Total_Tal']].rename(columns={'Enhed_Tal': 'Foreslået pris', 'Total_Tal': 'Total'}), use_container_width=True, hide_index=True)
+                st.dataframe(diverse[[beskrivelse_kol, 'Enhed_Tal', 'Antal', 'Total_Tal']].rename(columns={'Enhed_Tal': 'Vejl. pris', 'Total_Tal': 'Total'}), use_container_width=True, hide_index=True)
 
             # --- TOTALER ---
             st.divider()
@@ -142,7 +143,6 @@ else:
             sum_v_d = (vaesker['Total_Tal'].sum() if not vaesker.empty else 0) + (diverse['Total_Tal'].sum() if not diverse.empty else 0)
             total_alt = sum_reservedele + sum_v_d + arbejd_total
             
-            # Find antal kørte timer fra intervallets navn (f.eks. "1000 timer" -> 1000)
             try:
                 interval_tal = float("".join(filter(str.isdigit, valgt_interval)))
                 pris_pr_time = total_alt / interval_tal if interval_tal > 0 else 0
@@ -150,8 +150,8 @@ else:
                 pris_pr_time = 0
 
             c1, c2, c3, c4 = st.columns(4)
-            with c1: st.metric("SUM Reservedele", f"{sum_reservedele:,.2f} DKK")
-            with c2: st.metric("Væsker & Diverse", f"{sum_v_d:,.2f} DKK")
+            with c1: st.metric("Sum reservedele", f"{sum_reservedele:,.2f} DKK")
+            with c2: st.metric("Væsker & diverse", f"{sum_v_d:,.2f} DKK")
             with c3: st.metric("Arbejdsløn", f"{arbejd_total:,.2f} DKK")
             with c4: 
                 st.markdown(f"<div style='background-color: #367c2b; padding: 10px; border-radius: 5px; color: white; text-align: center;'>"
@@ -161,13 +161,14 @@ else:
             st.markdown("<br>", unsafe_allow_html=True)
             col_info, col_box = st.columns([2, 1])
             with col_info:
-                st.markdown(f"**Driftsøkonomi for dette service:**")
-                st.write(f"Når denne traktor kører til et **{valgt_interval}**, svarer den samlede serviceomkostning til en udgift pr. kørte time.")
+                st.markdown(f"### Driftsøkonomi")
+                st.write(f"For at give et overblik over maskinens driftsomkostninger er den samlede pris herunder fordelt ud på serviceintervallets varighed (**{valgt_interval}**).")
+                st.write(f"Dette tal repræsenterer den gennemsnitlige udgift til service pr. driftstime i denne periode.")
             
             with col_box:
-                st.markdown(f"<div style='border: 2px solid #367c2b; padding: 15px; border-radius: 10px; text-align: center;'>"
-                            f"<span style='color: gray; font-size: 0.9em;'>SERVICEPRIS PR. TIME</span><br>"
-                            f"<span style='font-size: 1.5em; font-weight: bold; color: #367c2b;'>{pris_pr_time:,.2f} DKK/t</span>"
+                st.markdown(f"<div style='border: 2px solid #367c2b; padding: 15px; border-radius: 10px; text-align: center; background-color: #f9f9f9;'>"
+                            f"<span style='color: #555; font-size: 0.9em; font-weight: bold;'>SERVICEOMKOSTNING PR. DRIFTSTIME</span><br>"
+                            f"<span style='font-size: 1.6em; font-weight: bold; color: #367c2b;'>{pris_pr_time:,.2f} DKK/t</span>"
                             f"</div>", unsafe_allow_html=True)
 
     except Exception as e:
