@@ -30,7 +30,7 @@ else:
     valgt_fil = os.path.join(nuværende_mappe, f"{model_valg}.csv")
 
     try:
-        # 1. Indlæs rå data for at finde headers og sektioner
+        # 1. Find header række
         raw_df = pd.read_csv(valgt_fil, sep=';', encoding='latin-1', header=None)
         header_row_index = 0
         for i, row in raw_df.iterrows():
@@ -38,7 +38,7 @@ else:
                 header_row_index = i
                 break
         
-        # 2. Indlæs med korrekt header
+        # 2. Indlæs data
         df = pd.read_csv(valgt_fil, sep=';', encoding='latin-1', header=header_row_index)
         df.columns = [str(c).strip() for c in df.columns]
         beskrivelse_kol = df.columns[0]
@@ -49,48 +49,58 @@ else:
         if interval_kolonner:
             valgt_interval = st.selectbox("Vælg Service Interval", interval_kolonner)
             
-            # Find sektions-start
-            v_idx = df[df[beskrivelse_kol].astype(str).str.strip().str.lower() == 'væsker'].index
-            d_idx = df[df[beskrivelse_kol].astype(str).str.strip().str.lower() == 'diverse'].index
-            v_start = v_idx[0] if len(v_idx) > 0 else 9999
-            d_start = d_idx[0] if len(d_idx) > 0 else 9999
-
-            # Hjælpefunktion til tal
+            # Hjælpefunktion til tal-rensning
             def rens_til_tal(val):
-                if pd.isna(val) or str(val).strip() in ["", "nan", "None"]: return 0.0
-                return pd.to_numeric(str(val).replace('.', '').replace(',', '.'), errors='coerce') or 0.0
+                s = str(val).replace('.', '').replace(',', '.').strip()
+                try:
+                    return float(s)
+                except:
+                    return 0.0
 
-            # --- FILTRERING ---
-            # Filtre og Væsker skal have markering i interval-kolonnen
-            df[valgt_interval] = df[valgt_interval].astype(str).replace(['nan', 'None', 'nan '], '').str.strip()
+            # Find sektioner
+            indices_vaesker = df[df[beskrivelse_kol].astype(str).str.contains('Væsker', case=False, na=False)].index
+            indices_diverse = df[df[beskrivelse_kol].astype(str).str.contains('Diverse', case=False, na=False)].index
             
-            hoved = df[(df.index < v_start) & (df[valgt_interval] != "")].copy()
-            vaesker = df[(df.index > v_start) & (df.index < d_start) & (df[valgt_interval] != "")].copy()
+            v_start = indices_vaesker[0] if len(indices_vaesker) > 0 else 9999
+            d_start = indices_diverse[0] if len(indices_diverse) > 0 else 9999
+
+            # --- RENSNING AF NAVNE (Skjul "None") ---
+            # Vi markerer rækker der skal skules
+            def skal_skjules(val):
+                v = str(val).strip().lower()
+                return v in ["none", "nan", ""]
+
+            # --- DATA OPSAMLING ---
+            df['markeret'] = df[valgt_interval].astype(str).replace(['nan', 'None', 'nan '], '').str.strip() != ""
+            df['er_none'] = df[beskrivelse_kol].apply(skal_skjules)
+
+            # 1. Filtre (Skal være markeret, før Væsker, og ikke være 'None')
+            hoved = df[(df.index < v_start) & (df['markeret']) & (~df['er_none'])].copy()
             
-            # Diverse sektionen: Tag alt med der har en pris i kolonne H (fra d_start og ned)
-            # Vi fjerner dog selve overskriftsrækken "Diverse"
+            # 2. Væsker (Mellem Væsker og Diverse, markeret, og ikke 'None')
+            vaesker = df[(df.index > v_start) & (df.index < d_start) & (df['markeret']) & (~df['er_none'])].copy()
+            
+            # 3. Diverse (Efter Diverse overskrift, har pris i H, og ikke 'None')
             diverse = df[df.index >= d_start].copy()
-            diverse = diverse[diverse[beskrivelse_kol].astype(str).str.strip().str.lower() != 'diverse']
-            diverse = diverse[diverse[pris_kol_h].apply(rens_til_tal) > 0].copy()
+            diverse['pris_tjek'] = diverse[pris_kol_h].apply(rens_til_tal)
+            diverse = diverse[(diverse['pris_tjek'] > 0) & (~diverse['er_none'])].copy()
+            
+            # Fjern selve sektionsoverskriften "Diverse" hvis den optræder som vare
+            diverse = diverse[~diverse[beskrivelse_kol].astype(str).str.contains('^diverse$', case=False, na=False)]
 
-            # --- BEREGNING ---
-            def beregn_visning(data, type="dele"):
+            # --- BEREGNINGER ---
+            def apply_calc(data, med_avance=False):
                 if data.empty: return data
                 data = data.copy()
+                data['Enhed_Tal'] = (data[ordretype] if med_avance else data[pris_kol_h]).apply(rens_til_tal)
                 data['Antal_Tal'] = data['Antal'].apply(rens_til_tal)
-                
-                if type == "dele":
-                    data['Enhed_Tal'] = data[ordretype].apply(rens_til_tal)
-                    data['Total_Tal'] = data['Antal_Tal'] * data['Enhed_Tal'] * (1 + avance/100)
-                else:
-                    # Væsker og Diverse bruger altid kolonne H
-                    data['Enhed_Tal'] = data[pris_kol_h].apply(rens_til_tal)
-                    data['Total_Tal'] = data['Antal_Tal'] * data['Enhed_Tal']
+                multiplier = (1 + avance/100) if med_avance else 1.0
+                data['Total_Tal'] = data['Antal_Tal'] * data['Enhed_Tal'] * multiplier
                 return data
 
-            hoved = beregn_visning(hoved, "dele")
-            vaesker = beregn_visning(vaesker, "univar")
-            diverse = beregn_visning(diverse, "univar")
+            hoved = apply_calc(hoved, med_avance=True)
+            vaesker = apply_calc(vaesker, med_avance=False)
+            diverse = apply_calc(diverse, med_avance=False)
 
             # --- VISNING ---
             st.subheader(f"Serviceoversigt: {model_valg} - {valgt_interval}")
@@ -123,16 +133,16 @@ else:
                     'Total': diverse['Total_Tal'].map("{:,.2f} DKK".format)
                 }), use_container_width=True, hide_index=True)
 
-            # TOTAL
+            # SAMLET TOTAL
             st.divider()
-            total_sum = hoved['Total_Tal'].sum() if not hoved.empty else 0
-            total_sum += vaesker['Total_Tal'].sum() if not vaesker.empty else 0
-            total_sum += diverse['Total_Tal'].sum() if not diverse.empty else 0
+            sum_h = hoved['Total_Tal'].sum() if not hoved.empty else 0
+            sum_v = vaesker['Total_Tal'].sum() if not vaesker.empty else 0
+            sum_d = diverse['Total_Tal'].sum() if not diverse.empty else 0
+            total_sum = sum_h + sum_v + sum_d
             
             st.metric("Samlet pris for dele (Ekskl. moms)", f"{total_sum:,.2f} DKK")
             
         else:
-            st.warning("Ingen service-intervaller fundet.")
-
+            st.warning("Kan ikke finde interval-kolonner.")
     except Exception as e:
         st.error(f"Fejl: {e}")
