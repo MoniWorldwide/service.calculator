@@ -1,5 +1,5 @@
 import streamlit as st
-import pandas as pd
+import pd as pd
 import os
 
 st.set_page_config(page_title="Deutz-Fahr Serviceberegner", layout="wide")
@@ -23,6 +23,10 @@ else:
     # --- SIDEBAR ---
     st.sidebar.header("Indstillinger")
     model_valg = st.sidebar.selectbox("Vælg Traktormodel", sorted(modeller))
+    
+    # Genindsat valg af ordretype
+    ordretype = st.sidebar.radio("Vælg Ordretype (Pris)", ["Brutto", "Haste", "Uge", "Måned"])
+    
     avance = st.sidebar.slider("Avance på dele (%)", 0, 50, 0)
 
     valgt_fil = os.path.join(nuværende_mappe, f"{model_valg}.csv")
@@ -40,9 +44,8 @@ else:
         df = pd.read_csv(valgt_fil, sep=';', encoding='latin-1', header=header_row_index)
         df.columns = [str(c).strip() for c in df.columns]
         
-        # Identificer kolonnerne præcist
         beskrivelse_kol = df.columns[0]
-        pris_kol_h = df.columns[7] # Kolonne H er den 8. kolonne (index 7)
+        # Vi bruger den valgte ordretype fra sidebaren til prisen
         
         interval_kolonner = [c for c in df.columns if "timer" in c.lower()]
         
@@ -58,10 +61,10 @@ else:
                 def rens_til_tal(serie):
                     return pd.to_numeric(serie.astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False), errors='coerce').fillna(0)
 
-                # Beregninger
+                # Beregninger baseret på valgt ordretype
                 dele_fundet['Antal_Tal'] = pd.to_numeric(dele_fundet['Antal'].astype(str).str.replace(',', '.'), errors='coerce').fillna(1)
-                dele_fundet['Pris_H'] = rens_til_tal(dele_fundet[pris_kol_h])
-                dele_fundet['Linje_Total'] = dele_fundet['Antal_Tal'] * dele_fundet['Pris_H'] * (1 + avance/100)
+                dele_fundet['Valgt_Pris_Tal'] = rens_til_tal(dele_fundet[ordretype])
+                dele_fundet['Linje_Total'] = dele_fundet['Antal_Tal'] * dele_fundet['Valgt_Pris_Tal'] * (1 + avance/100)
 
                 # Sektions-opdeling
                 vaesker_idx = df[df[beskrivelse_kol].astype(str).str.contains('Væsker', case=False, na=False)].index
@@ -80,36 +83,34 @@ else:
                         beskrivelse_kol: hoved[beskrivelse_kol],
                         'Reservedelsnr.': hoved['Reservedelsnr.'],
                         'Antal': hoved['Antal'],
-                        'Pris pr. stk': hoved[pris_kol_h]
+                        f'Pris ({ordretype})': hoved[ordretype]
                     }), use_container_width=True, hide_index=True)
 
-                # 2. Væsker (Uden Reservedelsnr)
+                # 2. Væsker (Uden Reservedelsnr + Ny overskrift)
                 vaesker = dele_fundet[(dele_fundet.index > v_start) & (dele_fundet.index < d_start)]
                 if not vaesker.empty:
                     st.markdown("#### Væsker (Olie, kølervæske osv.)")
                     st.dataframe(pd.DataFrame({
                         beskrivelse_kol: vaesker[beskrivelse_kol],
                         'Antal': vaesker['Antal'],
-                        'Pris pr. liter': vaesker[pris_kol_h],
-                        'Info': "Foreslået salgspris fra Univar"
+                        'Foreslået salgspris fra Univar': vaesker[ordretype]
                     }), use_container_width=True, hide_index=True)
 
-                # 3. Diverse (Uden Reservedelsnr)
+                # 3. Diverse (Uden Reservedelsnr + Ny overskrift)
                 diverse = dele_fundet[dele_fundet.index > d_start]
                 if not diverse.empty:
                     st.markdown("#### Diverse")
                     st.dataframe(pd.DataFrame({
                         beskrivelse_kol: diverse[beskrivelse_kol],
                         'Antal': diverse['Antal'],
-                        'Pris pr. enhed': diverse[pris_kol_h],
-                        'Info': "Foreslået salgspris fra Univar"
+                        'Foreslået salgspris fra Univar': diverse[ordretype]
                     }), use_container_width=True, hide_index=True)
 
                 # TOTAL
                 st.divider()
                 total_sum = dele_fundet['Linje_Total'].sum()
                 st.metric("Samlet pris (Ekskl. moms)", f"{total_sum:,.2f} DKK")
-                st.caption(f"Beregnet ud fra priser i kolonne H med {avance}% avance.")
+                st.caption(f"Beregnet ud fra {ordretype}-priser med {avance}% avance.")
             else:
                 st.info(f"Ingen markeringer fundet for {valgt_interval}")
         else:
