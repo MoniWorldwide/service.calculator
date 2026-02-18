@@ -43,6 +43,9 @@ else:
         df.columns = [str(c).strip() for c in df.columns]
         beskrivelse_kol = df.columns[0]
         
+        # Identificer kolonne H (index 7) til Univar priser
+        pris_kol_h = df.columns[7]
+        
         interval_kolonner = [c for c in df.columns if "timer" in c.lower()]
         
         if interval_kolonner:
@@ -69,12 +72,12 @@ else:
                     antal = pd.to_numeric(str(row['Antal']).replace(',', '.'), errors='coerce') or 0
                     
                     if row.name < v_start:
-                        # RESERVEDELE: Enhedspris + AVANCE
+                        # RESERVEDELE: Pris fra valgt ordretype + AVANCE
                         enhedspris = rens_til_tal(pd.Series([row[ordretype]]))[0]
                         linje_total = antal * enhedspris * (1 + avance/100)
                     else:
-                        # VÆSKER/DIVERSE: Enhedspris (uden avance)
-                        enhedspris = rens_til_tal(pd.Series([row[valgt_interval]]))[0]
+                        # VÆSKER/DIVERSE: Pris fra kolonne H (uden avance)
+                        enhedspris = rens_til_tal(pd.Series([row[pris_kol_h]]))[0]
                         linje_total = antal * enhedspris
                     
                     return pd.Series([enhedspris, linje_total])
@@ -85,7 +88,7 @@ else:
 
                 # --- VISNING ---
                 
-                # 1. Filtre (Med avance)
+                # 1. Filtre (Reservedele)
                 hoved = dele_fundet[dele_fundet.index < v_start]
                 if not hoved.empty:
                     st.markdown("#### Filtre og Reservedele")
@@ -97,7 +100,7 @@ else:
                         'Total (inkl. avance)': hoved['Linje_Total'].map("{:,.2f} DKK".format)
                     }), use_container_width=True, hide_index=True)
 
-                # 2. Væsker (Uden avance)
+                # 2. Væsker
                 vaesker = dele_fundet[(dele_fundet.index > v_start) & (dele_fundet.index < d_start)]
                 if not vaesker.empty:
                     st.markdown("#### Væsker (Olie, kølervæske osv.)")
@@ -108,7 +111,7 @@ else:
                         'Total': vaesker['Linje_Total'].map("{:,.2f} DKK".format)
                     }), use_container_width=True, hide_index=True)
 
-                # 3. Diverse (Uden avance)
+                # 3. Diverse
                 diverse = dele_fundet[dele_fundet.index > d_start]
                 if not diverse.empty:
                     st.markdown("#### Diverse")
@@ -123,7 +126,7 @@ else:
                 st.divider()
                 total_sum = dele_fundet['Linje_Total'].sum()
                 st.metric("Samlet pris for dele (Ekskl. moms)", f"{total_sum:,.2f} DKK")
-                st.caption(f"Bemærk: Avance på {avance}% er kun lagt på reservedele. Væsker og diverse er beregnet til fast pris.")
+                st.caption(f"Info: Væsker og diverse hentes fra kolonne H og beregnes uden avance.")
             else:
                 st.info(f"Ingen markeringer fundet for {valgt_interval}")
         else:
