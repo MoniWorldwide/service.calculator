@@ -20,7 +20,7 @@ with col1:
 
 with col2:
     st.markdown("<h1 style='margin-bottom: 0; color: #367c2b;'>Serviceberegner</h1>", unsafe_allow_html=True)
-    st.markdown("<p style='font-style: italic; color: gray;'>Total driftsøkonomi med specifikke arbejdstimer</p>", unsafe_allow_html=True)
+    st.markdown("<p style='font-style: italic; color: gray;'>Driftsøkonomi beregnet frem til valgte timetal (ekskl. aktuelt service)</p>", unsafe_allow_html=True)
 
 st.divider()
 
@@ -71,32 +71,30 @@ else:
 
         if interval_kolonner:
             st.sidebar.divider()
-            st.sidebar.header("⏱️ Aktuelt Service")
-            valgt_interval = st.sidebar.selectbox("Vælg service", interval_kolonner)
+            st.sidebar.header("⏱️ Driftstimer / Stop-punkt")
+            valgt_interval = st.sidebar.selectbox("Vælg timetal for beregning", interval_kolonner)
             
-            # Find alle relevante intervaller op til det valgte
+            # Find timer for det valgte punkt
             valgt_timer_tal = int("".join(filter(str.isdigit, valgt_interval)))
-            forudgaaende_intervaller = [col for col in interval_kolonner if int("".join(filter(str.isdigit, col))) < valgt_timer_tal]
-
-            # 1. Input for det VALGTE service
+            
+            # Logik: Tag kun de intervaller, der er STRENGT MINDRE end det valgte punkt
+            historiske_intervaller = [col for col in interval_kolonner if int("".join(filter(str.isdigit, col))) < valgt_timer_tal]
+            
+            # --- ARBEJDSTIMER INPUT ---
+            st.sidebar.divider()
+            st.sidebar.header("📋 Historiske arbejdstimer")
             mask_arbejd = df[beskrivelse_kol].astype(str).str.contains('Arbejd', case=False, na=False)
-            standard_nu = rens_til_tal(df[mask_arbejd][valgt_interval].values[0]) if mask_arbejd.any() else 0.0
-            timer_nu = st.sidebar.number_input(f"Arbejdstimer for {valgt_interval}", value=float(standard_nu), step=0.5)
-
-            # 2. Input for HISTORISKE services (skjult i en expander for at spare plads)
-            bruger_timer = {valgt_interval: timer_nu}
             
-            if forudgaaende_intervaller:
-                with st.sidebar.expander("Ret timer for tidligere services"):
-                    st.caption("Her kan du rette de timer, maskinen tidligere har brugt på service:")
-                    for interval in forudgaaende_intervaller:
-                        std_hist = rens_til_tal(df[mask_arbejd][interval].values[0]) if mask_arbejd.any() else 0.0
-                        t_hist = st.number_input(f"Timer v. {interval}", value=float(std_hist), step=0.5, key=f"hist_{interval}")
-                        bruger_timer[interval] = t_hist
-            
-            all_relevant_intervals = forudgaaende_intervaller + [valgt_interval]
+            bruger_timer = {}
+            if not historiske_intervaller:
+                st.sidebar.info("Ingen forudgående services før dette timetal.")
+            else:
+                for interval in historiske_intervaller:
+                    std_hist = rens_til_tal(df[mask_arbejd][interval].values[0]) if mask_arbejd.any() else 0.0
+                    t_hist = st.sidebar.number_input(f"Timer v. {interval}", value=float(std_hist), step=0.5, key=f"hist_{interval}")
+                    bruger_timer[interval] = t_hist
 
-            # --- AKKUMULERET BEREGNING ---
+            # --- AKKUMULERET BEREGNING (KUN FORUDGÅENDE) ---
             v_idx = df[df[beskrivelse_kol].astype(str).str.contains('Væsker', case=False, na=False)].index
             v_start = v_idx[0] if len(v_idx) > 0 else 9999
             d_idx = df[df[beskrivelse_kol].astype(str).str.contains('Diverse', case=False, na=False)].index
@@ -106,7 +104,7 @@ else:
             tot_vd = 0.0
             tot_arb = 0.0
 
-            for interval in all_relevant_intervals:
+            for interval in historiske_intervaller:
                 m_mask = df[interval].astype(str).replace(['nan', 'None', ''], None).notna()
                 
                 # Reservedele
@@ -122,18 +120,20 @@ else:
                 # Arbejdsløn
                 tot_arb += (bruger_timer[interval] * timepris)
 
-            # Læg de faste 500 kr. pr. service til
-            tot_vd += (len(all_relevant_intervals) * FAST_DIVERSE_GEBYR)
+            # Læg de faste 500 kr. pr. historisk service til
+            tot_vd += (len(historiske_intervaller) * FAST_DIVERSE_GEBYR)
             
             tot_alt = tot_res + tot_vd + tot_arb
+            # Beregn pris pr. time baseret på historik divideret med aktuel stand
             pris_pr_t = tot_alt / valgt_timer_tal if valgt_timer_tal > 0 else 0
 
-            # --- VISNING AF TABELLER (KUN FOR DET VALGTE INTERVAL) ---
-            df['markeret'] = df[valgt_interval].astype(str).replace(['nan', 'None', ''], None).notna()
+            # --- VISNING AF TABELLER (DET VALGTE/NÆSTE SERVICE) ---
+            st.subheader(f"Serviceoversigt: {valgt_visningsnavn}")
+            st.info(f"Nedenstående tabeller viser indholdet af et **{valgt_interval}** service, hvis det udføres. Det er dog **IKKE** medregnet i timeprisen i bunden.")
             
+            df['markeret'] = df[valgt_interval].astype(str).replace(['nan', 'None', ''], None).notna()
             hoved = df[(df.index < v_start) & (df['markeret'])].copy()
             hoved = hoved[hoved[beskrivelse_kol].str.strip().str.lower().replace(['nan','none',''], None).notna()]
-            
             vaesker = df[(df.index > v_start) & (df.index < d_start) & (df['markeret'])].copy()
             vaesker = vaesker[vaesker[beskrivelse_kol].str.strip().str.lower().replace(['nan','none',''], None).notna()]
             
@@ -147,10 +147,7 @@ else:
                 diverse_list.append({beskrivelse_kol: row[beskrivelse_kol], 'Pris': p, 'Antal': a, 'Total': p*a})
             diverse_final = pd.DataFrame(diverse_list)
 
-            # --- HOVEDSKÆRM VISNING ---
-            st.subheader(f"{valgt_visningsnavn} - {valgt_interval}")
-            
-            # Reservedele Tabel
+            # Vis tabellerne
             if not hoved.empty:
                 st.markdown("<h4 style='color: #367c2b;'>🛠️ Filtre og reservedele</h4>", unsafe_allow_html=True)
                 h_disp = hoved.copy()
@@ -158,7 +155,6 @@ else:
                 h_disp['Total'] = h_disp['Enhedspris'] * h_disp['Antal'].apply(rens_til_tal)
                 st.dataframe(h_disp[[beskrivelse_kol, 'Reservedelsnr.', 'Enhedspris', 'Antal', 'Total']], use_container_width=True, hide_index=True)
 
-            # Væsker Tabel
             if not vaesker.empty:
                 st.markdown("<h4 style='color: #367c2b;'>🛢️ Væsker</h4>", unsafe_allow_html=True)
                 v_disp = vaesker.copy()
@@ -166,24 +162,26 @@ else:
                 v_disp['Total'] = v_disp['Vejl. Univar pris'] * v_disp['Antal'].apply(rens_til_tal)
                 st.dataframe(v_disp[[beskrivelse_kol, 'Vejl. Univar pris', 'Antal', 'Total']], use_container_width=True, hide_index=True)
 
-            # Diverse Tabel
             st.markdown("<h4 style='color: #367c2b;'>📦 Diverse</h4>", unsafe_allow_html=True)
             st.dataframe(diverse_final, use_container_width=True, hide_index=True)
 
-            # --- TOTALER OG BEREGNING ---
+            # --- TOTALER OG DRIFTSØKONOMI ---
             st.divider()
-            st.markdown(f"### Samlede akkumulerede omkostninger (0 - {valgt_timer_tal} timer)")
+            st.markdown(f"### Akkumulerede omkostninger op til {valgt_timer_tal} timer")
+            st.caption(f"Beregningen inkluderer alt vedligehold udført *før* traktoren runder {valgt_timer_tal} timer. Det valgte {valgt_interval} service er udeladt.")
+            
             c1, c2, c3, c4 = st.columns(4)
-            with c1: st.metric("Total Reservedele", f"{tot_res:,.2f} DKK")
-            with c2: st.metric("Total Væsker/Diverse", f"{tot_vd:,.2f} DKK")
-            with c3: st.metric("Total Arbejdsløn", f"{tot_arb:,.2f} DKK")
+            with c1: st.metric("Reservedele (total)", f"{tot_res:,.2f} DKK")
+            with c2: st.metric("Væsker/Diverse (total)", f"{tot_vd:,.2f} DKK")
+            with c3: st.metric("Arbejdsløn (total)", f"{tot_arb:,.2f} DKK")
             with c4: 
                 st.markdown(f"<div style='background-color: #367c2b; padding: 10px; border-radius: 5px; color: white; text-align: center;'>"
-                            f"<small>AKKUMULERET TOTAL</small><br><strong><big>{tot_alt:,.2f} DKK</big></strong></div>", unsafe_allow_html=True)
+                            f"<small>TOTAL OMKOSTNING</small><br><strong><big>{tot_alt:,.2f} DKK</big></strong></div>", unsafe_allow_html=True)
 
-            st.markdown(f"<div style='margin-top:20px; border: 2px solid #367c2b; padding: 15px; border-radius: 10px; text-align: center; background-color: #f9f9f9;'>"
-                        f"<span style='color: #555; font-weight: bold;'>REEL PRIS PR. DRIFTSTIME (0-{valgt_timer_tal} t): </span>"
-                        f"<span style='font-size: 1.4em; font-weight: bold; color: #367c2b;'>{pris_pr_t:,.2f} DKK/t</span></div>", unsafe_allow_html=True)
+            st.markdown(f"<div style='margin-top:20px; border: 2px solid #367c2b; padding: 20px; border-radius: 10px; text-align: center; background-color: #f9f9f9;'>"
+                        f"<span style='color: #555; font-weight: bold; font-size: 1.1em;'>REEL SERVICEPRIS PR. DRIFTSTIME (0 - {valgt_timer_tal} t)</span><br>"
+                        f"<span style='font-size: 2em; font-weight: bold; color: #367c2b;'>{pris_pr_t:,.2f} DKK/t</span><br>"
+                        f"<small style='color: gray;'>Beregnet som: Samlet historisk vedligehold / {valgt_timer_tal} timer</small></div>", unsafe_allow_html=True)
 
     except Exception as e:
         st.error(f"Fejl: {e}")
