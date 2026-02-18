@@ -47,7 +47,7 @@ else:
         if interval_kolonner:
             valgt_interval = st.selectbox("Vælg Service Interval", interval_kolonner)
             
-            # Rens interval kolonne for at finde markerede rækker
+            # Rens interval kolonne
             df[valgt_interval] = df[valgt_interval].astype(str).replace(['nan', 'None', 'nan '], '').str.strip()
             dele_fundet = df[df[valgt_interval] != ""].copy()
 
@@ -56,13 +56,12 @@ else:
                 def rens_til_tal(serie):
                     return pd.to_numeric(serie.astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False), errors='coerce').fillna(0)
 
-                # Beregn Antal og Priser
-                dele_fundet['Antal_Fra_Excel'] = dele_fundet[valgt_interval]
+                # Forbered priser og mængder
+                dele_fundet['Mængde_Excel'] = dele_fundet[valgt_interval]
                 dele_fundet['Pris_Pr_Enhed'] = rens_til_tal(dele_fundet[ordretype])
                 
-                # Beregn total (håndterer 'x' som 1)
+                # Beregn linjetotal (håndterer 'x' som 1)
                 antal_numerisk = pd.to_numeric(dele_fundet[valgt_interval].str.replace(',', '.'), errors='coerce').fillna(1)
-                dele_fundet.loc[dele_fundet[valgt_interval].str.lower() == 'x', 'Antal_Tal'] = 1
                 dele_fundet['Linje_Total'] = antal_numerisk * dele_fundet['Pris_Pr_Enhed'] * (1 + avance/100)
 
                 # Find sektions-indekser
@@ -75,33 +74,36 @@ else:
                 hoved = dele_fundet[dele_fundet.index < v_start]
                 if not hoved.empty:
                     st.markdown("#### Filtre og Reservedele")
-                    hoved_vis = hoved.copy()
-                    hoved_vis = hoved_vis.rename(columns={'Reservedelsnr.': 'Reservedelsnr.', ordretype: 'Pris pr. stk'})
-                    st.dataframe(hoved_vis[[beskrivelse_kol, 'Reservedelsnr.', 'Pris pr. stk']], use_container_width=True, hide_index=True)
+                    # Vi fjerner en eventuel eksisterende 'Antal' kolonne for at undgå dubletter
+                    kol_til_visning = [beskrivelse_kol, 'Reservedelsnr.', ordretype]
+                    eksisterende_kol = [k for k in kol_til_visning if k in hoved.columns]
+                    st.dataframe(hoved[eksisterende_kol], use_container_width=True, hide_index=True)
 
-                # --- SEKTION 2: VÆSKER ---
+                # --- SEKTION 2 & 3: VÆSKER & DIVERSE ---
+                def vis_special_sektion(titel, data, pris_label):
+                    if not data.empty:
+                        st.markdown(f"#### {titel}")
+                        vis_df = data.copy()
+                        
+                        # Vi opretter de nye kolonner specifikt
+                        vis_df['Antal_Visning'] = vis_df['Mængde_Excel']
+                        vis_df['Info_Tekst'] = "Foreslået salgspris fra Univar"
+                        
+                        # Vi vælger kun de kolonner vi skal bruge og giver dem pæne navne
+                        # På denne måde undgår vi 'Duplicate column names'
+                        final_df = pd.DataFrame({
+                            beskrivelse_kol: vis_df[beskrivelse_kol],
+                            'Antal': vis_df['Antal_Visning'],
+                            'Info': vis_df['Info_Tekst'],
+                            pris_label: vis_df[ordretype]
+                        })
+                        st.dataframe(final_df, use_container_width=True, hide_index=True)
+
                 vaesker = dele_fundet[(dele_fundet.index > v_start) & (dele_fundet.index < d_start)]
-                if not vaesker.empty:
-                    st.markdown("#### Væsker (Olie, kølervæske osv.)")
-                    vaesker_vis = vaesker.copy()
-                    # Indstil de nye kolonne-værdier som ønsket
-                    vaesker_vis['Reservedelsnr.'] = vaesker_vis['Antal_Fra_Excel']
-                    vaesker_vis['Antal/info'] = "Foreslået salgspris fra Univar"
-                    
-                    vaesker_vis = vaesker_vis.rename(columns={'Reservedelsnr.': 'Antal', 'Antal/info': 'Info', ordretype: 'Pris pr. liter'})
-                    st.dataframe(vaesker_vis[[beskrivelse_kol, 'Antal', 'Info', 'Pris pr. liter']], use_container_width=True, hide_index=True)
+                vis_special_sektion("Væsker (Olie, kølervæske osv.)", vaesker, "Pris pr. liter")
 
-                # --- SEKTION 3: DIVERSE ---
                 diverse = dele_fundet[dele_fundet.index > d_start]
-                if not diverse.empty:
-                    st.markdown("#### Diverse")
-                    diverse_vis = diverse.copy()
-                    # Samme logik som væsker
-                    diverse_vis['Reservedelsnr.'] = diverse_vis['Antal_Fra_Excel']
-                    diverse_vis['Antal/info'] = "Foreslået salgspris fra Univar"
-                    
-                    diverse_vis = diverse_vis.rename(columns={'Reservedelsnr.': 'Antal', 'Antal/info': 'Info', ordretype: 'Pris pr. enhed'})
-                    st.dataframe(diverse_vis[[beskrivelse_kol, 'Antal', 'Info', 'Pris pr. enhed']], use_container_width=True, hide_index=True)
+                vis_special_sektion("Diverse", diverse, "Pris pr. enhed")
 
                 # TOTAL
                 st.divider()
