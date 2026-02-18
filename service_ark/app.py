@@ -25,7 +25,7 @@ else:
     model_valg = st.sidebar.selectbox("Vælg Traktormodel", sorted(modeller))
     timepris = st.sidebar.number_input("Din værkstedstimepris (DKK)", value=750)
     ordretype = st.sidebar.radio("Vælg Ordretype (Pris for filtre)", ["Brutto", "Haste", "Uge", "Måned"])
-    avance = st.sidebar.slider("Avance på dele (%)", 0, 50, 0)
+    avance = st.sidebar.slider("Avance på RESERVEDELE (%)", 0, 50, 0)
 
     valgt_fil = os.path.join(nuværende_mappe, f"{model_valg}.csv")
 
@@ -69,13 +69,14 @@ else:
                     antal = pd.to_numeric(str(row['Antal']).replace(',', '.'), errors='coerce') or 0
                     
                     if row.name < v_start:
-                        # Reservedele: Enhedspris fra valgt kolonne (Brutto, Haste osv.)
+                        # RESERVEDELE: Enhedspris + AVANCE
                         enhedspris = rens_til_tal(pd.Series([row[ordretype]]))[0]
+                        linje_total = antal * enhedspris * (1 + avance/100)
                     else:
-                        # Væsker/Diverse: Enhedspris står i interval-kolonnen
+                        # VÆSKER/DIVERSE: Enhedspris (uden avance)
                         enhedspris = rens_til_tal(pd.Series([row[valgt_interval]]))[0]
+                        linje_total = antal * enhedspris
                     
-                    linje_total = antal * enhedspris * (1 + avance/100)
                     return pd.Series([enhedspris, linje_total])
 
                 dele_fundet[['Enhedspris', 'Linje_Total']] = dele_fundet.apply(beregn_linje_data, axis=1)
@@ -84,7 +85,7 @@ else:
 
                 # --- VISNING ---
                 
-                # 1. Filtre
+                # 1. Filtre (Med avance)
                 hoved = dele_fundet[dele_fundet.index < v_start]
                 if not hoved.empty:
                     st.markdown("#### Filtre og Reservedele")
@@ -96,7 +97,7 @@ else:
                         'Total (inkl. avance)': hoved['Linje_Total'].map("{:,.2f} DKK".format)
                     }), use_container_width=True, hide_index=True)
 
-                # 2. Væsker
+                # 2. Væsker (Uden avance)
                 vaesker = dele_fundet[(dele_fundet.index > v_start) & (dele_fundet.index < d_start)]
                 if not vaesker.empty:
                     st.markdown("#### Væsker (Olie, kølervæske osv.)")
@@ -104,10 +105,10 @@ else:
                         beskrivelse_kol: vaesker[beskrivelse_kol],
                         'Foreslået salgspris fra Univar': vaesker['Enhedspris'].map("{:,.2f}".format),
                         'Antal': vaesker['Antal'],
-                        'Total (inkl. avance)': vaesker['Linje_Total'].map("{:,.2f} DKK".format)
+                        'Total': vaesker['Linje_Total'].map("{:,.2f} DKK".format)
                     }), use_container_width=True, hide_index=True)
 
-                # 3. Diverse
+                # 3. Diverse (Uden avance)
                 diverse = dele_fundet[dele_fundet.index > d_start]
                 if not diverse.empty:
                     st.markdown("#### Diverse")
@@ -115,14 +116,14 @@ else:
                         beskrivelse_kol: diverse[beskrivelse_kol],
                         'Foreslået salgspris fra Univar': diverse['Enhedspris'].map("{:,.2f}".format),
                         'Antal': diverse['Antal'],
-                        'Total (inkl. avance)': diverse['Linje_Total'].map("{:,.2f} DKK".format)
+                        'Total': diverse['Linje_Total'].map("{:,.2f} DKK".format)
                     }), use_container_width=True, hide_index=True)
 
                 # TOTAL
                 st.divider()
                 total_sum = dele_fundet['Linje_Total'].sum()
                 st.metric("Samlet pris for dele (Ekskl. moms)", f"{total_sum:,.2f} DKK")
-                st.caption(f"Beregnet med en avance på {avance}% og en værkstedstimepris på {timepris} DKK.")
+                st.caption(f"Bemærk: Avance på {avance}% er kun lagt på reservedele. Væsker og diverse er beregnet til fast pris.")
             else:
                 st.info(f"Ingen markeringer fundet for {valgt_interval}")
         else:
