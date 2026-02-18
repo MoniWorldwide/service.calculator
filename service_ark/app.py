@@ -36,7 +36,6 @@ if not modeller_raw:
 else:
     # --- SIDEBAR ---
     st.sidebar.header("Indstillinger")
-    
     model_visning = {f"Deutz-Fahr {m}": m for m in modeller_raw}
     valgt_visningsnavn = st.sidebar.selectbox("Vælg Traktormodel", list(model_visning.keys()))
     model_valg = model_visning[valgt_visningsnavn]
@@ -82,7 +81,7 @@ else:
             # Markering tjek: Er cellen i interval-kolonnen udfyldt?
             df['markeret'] = df[valgt_interval].astype(str).replace(['nan', 'None', ''], None).notna()
             
-            # --- SEKTIONS-OPDELING (Nu alle afhængige af 'markeret') ---
+            # --- SEKTIONS-OPDELING ---
             
             # 1. Filtre
             hoved = df[(df.index < v_start) & (df['markeret'])].copy()
@@ -92,12 +91,19 @@ else:
             vaesker = df[(df.index > v_start) & (df.index < d_start) & (df['markeret'])].copy()
             vaesker = vaesker[~vaesker[beskrivelse_kol].astype(str).str.strip().str.lower().isin(["none", "nan", ""])]
             
-            # 3. Diverse (Dynamisk tjek på intervallet)
+            # 3. Diverse - RETTET LOGIK HER
             diverse = df[(df.index >= d_start) & (df['markeret'])].copy()
-            diverse = diverse[~diverse[beskrivelse_kol].astype(str).str.strip().str.lower().isin(["none", "nan", "", "diverse"])]
-            # Sikr at der er en pris før vi tager den med
-            diverse['pris_tjek'] = diverse[pris_kol_h].apply(rens_til_tal)
-            diverse = diverse[diverse['pris_tjek'] > 0].copy()
+            
+            def rens_diverse(row):
+                navn = str(row[beskrivelse_kol]).strip().lower()
+                pris = rens_til_tal(row[pris_kol_h])
+                # Fjern tomme rækker
+                if navn in ["none", "nan", ""]: return False
+                # Tillad "diverse" hvis der er en reel pris, ellers fjern den (da det så er en overskrift)
+                if navn == "diverse" and pris <= 0: return False
+                return True
+
+            diverse = diverse[diverse.apply(rens_diverse, axis=1)].copy()
 
             # --- ARBEJDSTIMER ---
             mask_arbejd = df[beskrivelse_kol].astype(str).str.contains('Arbejd', case=False, na=False)
