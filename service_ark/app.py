@@ -43,7 +43,7 @@ else:
         df.columns = [str(c).strip() for c in df.columns]
         beskrivelse_kol = df.columns[0]
         
-        # Identificer kolonne H (index 7) til Univar priser
+        # Kolonne H (index 7) indeholder priserne til Væsker og Diverse
         pris_kol_h = df.columns[7]
         
         interval_kolonner = [c for c in df.columns if "timer" in c.lower()]
@@ -51,32 +51,33 @@ else:
         if interval_kolonner:
             valgt_interval = st.selectbox("Vælg Service Interval", interval_kolonner)
             
-            # Find rækker markeret i intervallet
+            # Find rækker markeret i det valgte interval
             df[valgt_interval] = df[valgt_interval].astype(str).replace(['nan', 'None', 'nan '], '').str.strip()
             dele_fundet = df[df[valgt_interval] != ""].copy()
 
             if not dele_fundet.empty:
-                # Rens tal-funktion
+                # Hjælpefunktion til at rense tal fra CSV
                 def rens_til_tal(serie):
                     return pd.to_numeric(serie.astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False), errors='coerce').fillna(0)
 
-                # Find skel mellem sektioner
-                vaesker_idx = df[df[beskrivelse_kol].astype(str).str.contains('Væsker', case=False, na=False)].index
-                diverse_idx = df[df[beskrivelse_kol].astype(str).str.contains('Diverse', case=False, na=False)].index
+                # Find skel mellem sektioner i Excel-arket
+                vaesker_idx = df[df[beskrivelse_kol].astype(str).str.strip().str.lower() == 'væsker'].index
+                diverse_idx = df[df[beskrivelse_kol].astype(str).str.strip().str.lower() == 'diverse'].index
+                
                 v_start = vaesker_idx[0] if len(vaesker_idx) > 0 else 9999
                 d_start = diverse_idx[0] if len(diverse_idx) > 0 else 9999
 
-                # Beregn data til visning
+                # Beregningslogik
                 def beregn_linje_data(row):
-                    # Hent antal (Kolonne C)
+                    # Antal hentes fra kolonne C
                     antal = pd.to_numeric(str(row['Antal']).replace(',', '.'), errors='coerce') or 0
                     
                     if row.name < v_start:
-                        # RESERVEDELE: Pris fra valgt ordretype + AVANCE
+                        # RESERVEDELE: Pris fra valgt ordretype (Brutto/Haste osv.) + AVANCE
                         enhedspris = rens_til_tal(pd.Series([row[ordretype]]))[0]
                         linje_total = antal * enhedspris * (1 + avance/100)
                     else:
-                        # VÆSKER/DIVERSE: Pris fra kolonne H (uden avance)
+                        # VÆSKER/DIVERSE: Enhedspris hentes fra Kolonne H (uden avance)
                         enhedspris = rens_til_tal(pd.Series([row[pris_kol_h]]))[0]
                         linje_total = antal * enhedspris
                     
@@ -88,7 +89,7 @@ else:
 
                 # --- VISNING ---
                 
-                # 1. Filtre (Reservedele)
+                # 1. Filtre og Reservedele
                 hoved = dele_fundet[dele_fundet.index < v_start]
                 if not hoved.empty:
                     st.markdown("#### Filtre og Reservedele")
@@ -111,26 +112,30 @@ else:
                         'Total': vaesker['Linje_Total'].map("{:,.2f} DKK".format)
                     }), use_container_width=True, hide_index=True)
 
-                # 3. Diverse
-                diverse = dele_fundet[dele_fundet.index > d_start]
+                # 3. Diverse (Inkluderer nu punktet "Diverse" under overskriften)
+                diverse = dele_fundet[dele_fundet.index >= d_start]
+                # Vi fjerner selve overskriftsrækken hvis den er kommet med i 'dele_fundet'
+                diverse = diverse[diverse[beskrivelse_kol].astype(str).str.strip().str.lower() != 'diverse']
+                
                 if not diverse.empty:
                     st.markdown("#### Diverse")
                     st.dataframe(pd.DataFrame({
                         beskrivelse_kol: diverse[beskrivelse_kol],
-                        'Foreslået salgspris fra Univar': diverse['Enhedspris'].map("{:,.2f}".format),
+                        'Foreslået salgspris': diverse['Enhedspris'].map("{:,.2f}".format),
                         'Antal': diverse['Antal'],
                         'Total': diverse['Linje_Total'].map("{:,.2f} DKK".format)
                     }), use_container_width=True, hide_index=True)
 
-                # TOTAL
+                # SAMLET TOTAL
                 st.divider()
                 total_sum = dele_fundet['Linje_Total'].sum()
                 st.metric("Samlet pris for dele (Ekskl. moms)", f"{total_sum:,.2f} DKK")
-                st.caption(f"Info: Væsker og diverse hentes fra kolonne H og beregnes uden avance.")
+                st.caption(f"Bemærk: Væsker og diverse priser hentes fra kolonne H uden avance. Reservedele bruger {ordretype}-priser + {avance}% avance.")
+                
             else:
-                st.info(f"Ingen markeringer fundet for {valgt_interval}")
+                st.info(f"Ingen dele markeret i {valgt_interval}")
         else:
-            st.warning("Kunne ikke finde service-intervaller.")
+            st.warning("Service-intervaller ikke fundet.")
 
     except Exception as e:
         st.error(f"Der opstod en fejl: {e}")
