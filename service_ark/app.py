@@ -1,8 +1,8 @@
 import streamlit as st
 import pandas as pd
+import os
 
-# Opsætning af traktormodeller og deres tilhørende CSV-filer
-# Sørg for at filnavnene herunder matcher præcis det, du har uploadet til GitHub
+# Liste over modeller
 model_filer = {
     "9340": "9340.csv",
     "8280": "8280.csv",
@@ -22,15 +22,20 @@ model_filer = {
 
 st.title("Deutz-Fahr Serviceberegner")
 
-# Valg af model
 model = st.selectbox("Vælg Traktormodel", list(model_filer.keys()))
 
-# Indlæs data
+# Find den mappe app.py ligger i
+nuværende_mappe = os.path.dirname(__file__)
+fil_sti = os.path.join(nuværende_mappe, model_filer[model])
+
 try:
-    # Vi læser CSV-filen. Vi antager den er semikolon-separeret (standard i DK Excel)
-    df = pd.read_csv(model_filer[model], sep=';', skiprows=2)
-    st.success(f"Data for {model} er indlæst!")
-    st.write(df) # Viser dataene så du kan tjekke om de ser rigtige ud
+    # Vi prøver at læse filen
+    df = pd.read_csv(fil_sti, sep=';', encoding='utf-8')
+    st.success(f"Fundet! Her er data for {model}")
+    st.dataframe(df)
 except Exception as e:
-    st.error(f"Kunne ikke finde eller læse filen {model_filer[model]}. Tjek filnavnet på GitHub.")
-    st.info("Husk at filerne skal ligge i samme mappe som app.py")
+    st.error(f"Fejl: Kan ikke finde filen '{model_filer[model]}'")
+    st.info(f"Jeg leder i denne mappe: {nuværende_mappe}")
+    
+    # Vis hvilke filer der rent faktisk findes i mappen, så vi kan se fejlen
+    st.write("Filer fundet i mappen:", os.listdir(nuværende_mappe))
