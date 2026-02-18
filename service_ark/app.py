@@ -94,24 +94,24 @@ else:
             for interval in forudgaaende_intervaller:
                 m_mask = df[interval].astype(str).replace(['nan', 'None', ''], None).notna()
                 
-                # Res
+                # Reservedele
                 res_p = df[(df.index < v_start) & m_mask].copy()
                 tot_res += (res_p[ordretype].apply(rens_til_tal) * res_p['Antal'].apply(rens_til_tal) * (1 + avance/100)).sum()
                 
                 # Væsker & Diverse fra Excel
                 vd_p = df[(df.index > v_start) & m_mask].copy()
                 vd_p = vd_p[~vd_p[beskrivelse_kol].astype(str).str.strip().str.lower().isin(["none", "nan", "", "diverse"])]
-                tot_vd += (vd_p[pris_kol_h].apply(rens_til_tal) * vd_part_antal_tjek if 'Antal' in vd_p.columns else 1).sum() # Forenklet logik
-                # Mere præcis opsamling af væsker/diverse priser
+                
                 for _, r in vd_p.iterrows():
                     tot_vd += rens_til_tal(r[pris_kol_h]) * rens_til_tal(r['Antal'])
 
-                # Arb
+                # Arbejdsløn
                 if interval == valgt_interval:
                     tot_arb += (valgte_arbejdstimer * timepris)
                 elif mask_arbejd.any():
                     tot_arb += (rens_til_tal(df[mask_arbejd][interval].values[0]) * timepris)
 
+            # Læg de faste 500 kr. pr. service til
             tot_vd += (len(forudgaaende_intervaller) * FAST_DIVERSE_GEBYR)
             tot_alt = tot_res + tot_vd + tot_arb
             pris_pr_t = tot_alt / valgt_timer_tal if valgt_timer_tal > 0 else 0
@@ -119,24 +119,23 @@ else:
             # --- FILTRERING AF TABELLER (DET VALGTE INTERVAL) ---
             df['markeret'] = df[valgt_interval].astype(str).replace(['nan', 'None', ''], None).notna()
             
-            # Filtre
+            # 1. Filtre
             hoved = df[(df.index < v_start) & (df['markeret'])].copy()
             hoved = hoved[hoved[beskrivelse_kol].str.strip().str.lower().replace(['nan','none',''], None).notna()]
             
-            # Væsker
+            # 2. Væsker
             vaesker = df[(df.index > v_start) & (df.index < d_start) & (df['markeret'])].copy()
             vaesker = vaesker[vaesker[beskrivelse_kol].str.strip().str.lower().replace(['nan','none',''], None).notna()]
             
-            # Diverse fra Excel
+            # 3. Diverse (Fast post + Excel rækker)
             diverse_excel = df[(df.index >= d_start) & (df['markeret'])].copy()
             diverse_excel = diverse_excel[diverse_excel[beskrivelse_kol].str.strip().str.lower().replace(['nan','none','diverse',''], None).notna()]
             
-            # Sammensæt Diverse tabel (Fast gebyr + Excel poster)
-            diverse_list = [{beskrivelse_kol: "Fast diverse omkostning", 'Enhed_Tal': FAST_DIVERSE_GEBYR, 'Antal_Tal': 1.0, 'Total_Tal': FAST_DIVERSE_GEBYR}]
+            diverse_list = [{beskrivelse_kol: "Fast diverse omkostning", 'Pris': FAST_DIVERSE_GEBYR, 'Antal': 1.0, 'Total': FAST_DIVERSE_GEBYR}]
             for _, row in diverse_excel.iterrows():
                 p = rens_til_tal(row[pris_kol_h])
                 a = rens_til_tal(row['Antal'])
-                diverse_list.append({beskrivelse_kol: row[beskrivelse_kol], 'Enhed_Tal': p, 'Antal_Tal': a, 'Total_Tal': p*a})
+                diverse_list.append({beskrivelse_kol: row[beskrivelse_kol], 'Pris': p, 'Antal': a, 'Total': p*a})
             diverse_final = pd.DataFrame(diverse_list)
 
             # --- VISNING ---
@@ -144,19 +143,21 @@ else:
             
             if not hoved.empty:
                 st.markdown("<h4 style='color: #367c2b;'>🛠️ Filtre og reservedele</h4>", unsafe_allow_html=True)
-                hoved['Enhedspris'] = hoved[ordretype].apply(rens_til_tal) * (1 + avance/100)
-                hoved['Total'] = hoved['Enhedspris'] * hoved['Antal'].apply(rens_til_tal)
-                st.dataframe(hoved[[beskrivelse_kol, 'Reservedelsnr.', 'Enhedspris', 'Antal', 'Total']], use_container_width=True, hide_index=True)
+                h_disp = hoved.copy()
+                h_disp['Enhedspris'] = h_disp[ordretype].apply(rens_til_tal) * (1 + avance/100)
+                h_disp['Total'] = h_disp['Enhedspris'] * h_disp['Antal'].apply(rens_til_tal)
+                st.dataframe(h_disp[[beskrivelse_kol, 'Reservedelsnr.', 'Enhedspris', 'Antal', 'Total']], use_container_width=True, hide_index=True)
 
             if not vaesker.empty:
                 st.markdown("<h4 style='color: #367c2b;'>🛢️ Væsker</h4>", unsafe_allow_html=True)
                 st.info("Prisen på væsker er en foreslået salgspris fra Univar. Det anbefales at kontakte Univar for den dagsaktuelle pris.")
-                vaesker['Vejl. Univar pris'] = vaesker[pris_kol_h].apply(rens_til_tal)
-                vaesker['Total'] = vaesker['Vejl. Univar pris'] * vaesker['Antal'].apply(rens_til_tal)
-                st.dataframe(vaesker[[beskrivelse_kol, 'Vejl. Univar pris', 'Antal', 'Total']], use_container_width=True, hide_index=True)
+                v_disp = vaesker.copy()
+                v_disp['Vejl. Univar pris'] = v_disp[pris_kol_h].apply(rens_til_tal)
+                v_disp['Total'] = v_disp['Vejl. Univar pris'] * v_disp['Antal'].apply(rens_til_tal)
+                st.dataframe(v_disp[[beskrivelse_kol, 'Vejl. Univar pris', 'Antal', 'Total']], use_container_width=True, hide_index=True)
 
             st.markdown("<h4 style='color: #367c2b;'>📦 Diverse</h4>", unsafe_allow_html=True)
-            st.dataframe(diverse_final.rename(columns={'Enhed_Tal': 'Pris', 'Antal_Tal': 'Antal', 'Total_Tal': 'Total'}), use_container_width=True, hide_index=True)
+            st.dataframe(diverse_final, use_container_width=True, hide_index=True)
 
             # --- TOTALER ---
             st.divider()
