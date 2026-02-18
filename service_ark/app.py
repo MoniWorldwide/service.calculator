@@ -2,40 +2,47 @@ import streamlit as st
 import pandas as pd
 import os
 
-# Liste over modeller
-model_filer = {
-    "9340": "9340.csv",
-    "8280": "8280.csv",
-    "7250": "7250.csv",
-    "6230": "6230.csv",
-    "6210": "6210.csv",
-    "6190": "6190.csv",
-    "6165": "6165.csv",
-    "6170.4": "6170.4.csv",
-    "6150.4": "6150.4.csv",
-    "6135C": "6135C.csv",
-    "5125": "5125.csv",
-    "5115D TTV": "5115D TTV.csv",
-    "5105": "5105.csv",
-    "5080 Keyline": "5080 Keyline.csv"
-}
+st.set_page_config(page_title="Deutz-Fahr Serviceberegner", layout="wide")
 
-st.title("Deutz-Fahr Serviceberegner")
+# Overskrift og Logo
+col1, col2 = st.columns([1, 4])
+with col1:
+    if os.path.exists("logo.png"):
+        st.image("logo.png", width=150)
+with col2:
+    st.title("Deutz-Fahr Serviceberegner")
 
-model = st.selectbox("Vælg Traktormodel", list(model_filer.keys()))
-
-# Find den mappe app.py ligger i
+# Find alle CSV-filer i mappen
 nuværende_mappe = os.path.dirname(__file__)
-fil_sti = os.path.join(nuværende_mappe, model_filer[model])
+filer_i_mappe = [f for f in os.listdir(nuværende_mappe) if f.endswith('.csv')]
 
-try:
-    # Vi prøver at læse filen
-    df = pd.read_csv(fil_sti, sep=';', encoding='utf-8')
-    st.success(f"Fundet! Her er data for {model}")
-    st.dataframe(df)
-except Exception as e:
-    st.error(f"Fejl: Kan ikke finde filen '{model_filer[model]}'")
-    st.info(f"Jeg leder i denne mappe: {nuværende_mappe}")
-    
-    # Vis hvilke filer der rent faktisk findes i mappen, så vi kan se fejlen
-    st.write("Filer fundet i mappen:", os.listdir(nuværende_mappe))
+# Lav en pæn liste over modeller baseret på de filer der rent faktisk findes
+modeller = [f.replace('.csv', '') for f in filer_i_mappe]
+
+if ikke modeller:
+    st.error("Ingen CSV-filer fundet i mappen! Sørg for at dine filer ender på .csv")
+else:
+    model_valg = st.selectbox("Vælg Traktormodel", sorted(modeller))
+    valgt_fil = os.path.join(nuværende_mappe, f"{model_valg}.csv")
+
+    try:
+        # Vi prøver først med semikolon (standard dansk Excel CSV)
+        # Vi bruger 'latin-1' encoding for at håndtere danske tegn
+        df = pd.read_csv(valgt_fil, sep=';', encoding='latin-1')
+        
+        # Hvis den kun finder 1 kolonne, er det nok fordi den bruger komma i stedet for semikolon
+        if df.shape[1] <= 1:
+            df = pd.read_csv(valgt_fil, sep=',', encoding='latin-1')
+
+        st.success(f"Prisliste for {model_valg} er indlæst")
+        
+        # Vis tabellen
+        st.dataframe(df, use_container_width=True)
+        
+    except Exception as e:
+        st.error(f"Kunne ikke læse filen. Fejl: {e}")
+
+# Debug info (kan fjernes senere)
+with st.expander("Teknisk info (Se hvilke filer systemet ser)"):
+    st.write("Mappe:", nuværende_mappe)
+    st.write("Filer fundet:", filer_i_mappe)
