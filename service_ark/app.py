@@ -57,31 +57,28 @@ else:
                 def rens_til_tal(serie):
                     return pd.to_numeric(serie.astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False), errors='coerce').fillna(0)
 
-                # Sektions-opdeling for at vide hvordan vi beregner
+                # Find skel mellem sektioner
                 vaesker_idx = df[df[beskrivelse_kol].astype(str).str.contains('Væsker', case=False, na=False)].index
                 diverse_idx = df[df[beskrivelse_kol].astype(str).str.contains('Diverse', case=False, na=False)].index
                 v_start = vaesker_idx[0] if len(vaesker_idx) > 0 else 9999
                 d_start = diverse_idx[0] if len(diverse_idx) > 0 else 9999
 
-                # Beregn Linje_Total baseret på sektion
-                def beregn_linje(row):
-                    val_in_interval = str(row[valgt_interval]).replace(',', '.')
-                    try:
-                        pris_fra_interval = float(val_in_interval)
-                    except:
-                        pris_fra_interval = 0
+                # Beregn data til visning
+                def beregn_linje_data(row):
+                    # Hent antal (Kolonne C)
+                    antal = pd.to_numeric(str(row['Antal']).replace(',', '.'), errors='coerce') or 0
                     
-                    # Filtre (før Væsker sektionen)
                     if row.name < v_start:
-                        antal = pd.to_numeric(str(row['Antal']).replace(',', '.'), errors='coerce') or 1
+                        # Reservedele: Enhedspris fra valgt kolonne (Brutto, Haste osv.)
                         enhedspris = rens_til_tal(pd.Series([row[ordretype]]))[0]
-                        return antal * enhedspris * (1 + avance/100)
-                    
-                    # Væsker og Diverse (Prisen står i selve interval-feltet)
                     else:
-                        return pris_fra_interval * (1 + avance/100)
+                        # Væsker/Diverse: Enhedspris står i interval-kolonnen
+                        enhedspris = rens_til_tal(pd.Series([row[valgt_interval]]))[0]
+                    
+                    linje_total = antal * enhedspris * (1 + avance/100)
+                    return pd.Series([enhedspris, linje_total])
 
-                dele_fundet['Linje_Total'] = dele_fundet.apply(beregn_linje, axis=1)
+                dele_fundet[['Enhedspris', 'Linje_Total']] = dele_fundet.apply(beregn_linje_data, axis=1)
 
                 st.subheader(f"Serviceoversigt: {model_valg} - {valgt_interval}")
 
@@ -94,8 +91,9 @@ else:
                     st.dataframe(pd.DataFrame({
                         beskrivelse_kol: hoved[beskrivelse_kol],
                         'Reservedelsnr.': hoved['Reservedelsnr.'],
+                        'Enhedspris': hoved['Enhedspris'].map("{:,.2f}".format),
                         'Antal': hoved['Antal'],
-                        f'Pris ({ordretype})': hoved[ordretype]
+                        'Total (inkl. avance)': hoved['Linje_Total'].map("{:,.2f} DKK".format)
                     }), use_container_width=True, hide_index=True)
 
                 # 2. Væsker
@@ -104,8 +102,9 @@ else:
                     st.markdown("#### Væsker (Olie, kølervæske osv.)")
                     st.dataframe(pd.DataFrame({
                         beskrivelse_kol: vaesker[beskrivelse_kol],
+                        'Foreslået salgspris fra Univar': vaesker['Enhedspris'].map("{:,.2f}".format),
                         'Antal': vaesker['Antal'],
-                        'Foreslået salgspris fra Univar': vaesker[valgt_interval] # Henter prisen fra intervallet
+                        'Total (inkl. avance)': vaesker['Linje_Total'].map("{:,.2f} DKK".format)
                     }), use_container_width=True, hide_index=True)
 
                 # 3. Diverse
@@ -114,8 +113,9 @@ else:
                     st.markdown("#### Diverse")
                     st.dataframe(pd.DataFrame({
                         beskrivelse_kol: diverse[beskrivelse_kol],
+                        'Foreslået salgspris fra Univar': diverse['Enhedspris'].map("{:,.2f}".format),
                         'Antal': diverse['Antal'],
-                        'Foreslået salgspris fra Univar': diverse[valgt_interval] # Henter prisen fra intervallet
+                        'Total (inkl. avance)': diverse['Linje_Total'].map("{:,.2f} DKK".format)
                     }), use_container_width=True, hide_index=True)
 
                 # TOTAL
