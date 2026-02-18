@@ -73,30 +73,31 @@ else:
                 try: return float(s)
                 except: return 0.0
 
-            # Sektioner
+            # Find sektioner
             v_idx = df[df[beskrivelse_kol].astype(str).str.contains('Væsker', case=False, na=False)].index
             d_idx = df[df[beskrivelse_kol].astype(str).str.contains('Diverse', case=False, na=False)].index
             v_start = v_idx[0] if len(v_idx) > 0 else 9999
             d_start = d_idx[0] if len(d_idx) > 0 else 9999
 
-            # --- DATA OPSAMLING ---
-            df['markeret'] = df[valgt_interval].astype(str).replace(['nan', 'None'], '').str.strip() != ""
+            # Markering tjek: Er cellen i interval-kolonnen udfyldt?
+            df['markeret'] = df[valgt_interval].astype(str).replace(['nan', 'None', ''], None).notna()
             
+            # --- SEKTIONS-OPDELING (Nu alle afhængige af 'markeret') ---
+            
+            # 1. Filtre
             hoved = df[(df.index < v_start) & (df['markeret'])].copy()
             hoved = hoved[~hoved[beskrivelse_kol].astype(str).str.strip().str.lower().isin(["none", "nan", ""])]
             
+            # 2. Væsker
             vaesker = df[(df.index > v_start) & (df.index < d_start) & (df['markeret'])].copy()
             vaesker = vaesker[~vaesker[beskrivelse_kol].astype(str).str.strip().str.lower().isin(["none", "nan", ""])]
             
-            diverse_sektion = df[df.index >= d_start].copy()
-            def filter_diverse(row):
-                navn = str(row[beskrivelse_kol]).strip().lower()
-                pris = rens_til_tal(row[pris_kol_h])
-                if navn in ["none", "nan", ""]: return False
-                if navn == "diverse" and pris <= 0: return False
-                return pris > 0
-            
-            diverse = diverse_sektion[diverse_sektion.apply(filter_diverse, axis=1)].copy()
+            # 3. Diverse (Dynamisk tjek på intervallet)
+            diverse = df[(df.index >= d_start) & (df['markeret'])].copy()
+            diverse = diverse[~diverse[beskrivelse_kol].astype(str).str.strip().str.lower().isin(["none", "nan", "", "diverse"])]
+            # Sikr at der er en pris før vi tager den med
+            diverse['pris_tjek'] = diverse[pris_kol_h].apply(rens_til_tal)
+            diverse = diverse[diverse['pris_tjek'] > 0].copy()
 
             # --- ARBEJDSTIMER ---
             mask_arbejd = df[beskrivelse_kol].astype(str).str.contains('Arbejd', case=False, na=False)
@@ -157,7 +158,7 @@ else:
                 st.markdown(f"<div style='background-color: #367c2b; padding: 10px; border-radius: 5px; color: white; text-align: center;'>"
                             f"<small>SAMLET TOTAL (Ekskl. moms)</small><br><strong><big>{total_alt:,.2f} DKK</big></strong></div>", unsafe_allow_html=True)
 
-            # --- DRIFTSØKONOMI OVERSIGT ---
+            # --- DRIFTSØKONOMI ---
             st.markdown("<br>", unsafe_allow_html=True)
             col_info, col_box = st.columns([2, 1])
             with col_info:
