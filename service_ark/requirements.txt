@@ -2,3 +2,4 @@ pandas
 streamlit
 streamlit-drawable-canvas
 altair<5
+imghdr
