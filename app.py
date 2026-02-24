@@ -7,9 +7,7 @@ from datetime import datetime
 st.set_page_config(page_title="Deutz-Fahr Intern Beregner", layout="wide")
 
 DATA_MAPPE = "service_ark"
-# Fast instruks: 500 DKK til diverse på ALLE services
 FAST_DIVERSE_TILLAEG = 500.0 
-# Søgeord til at flytte rækker til Diverse-tabellen
 DIVERSE_SØGEORD = ["Testudstyr", "D-Tech", "aircon", "Hjælpematerialer"]
 
 def find_logo():
@@ -19,9 +17,16 @@ def find_logo():
     return None
 
 def rens_tal(val):
+    """Sikrer korrekt læsning af tal uanset om CSV bruger , eller . som decimal"""
     if pd.isna(val) or str(val).strip() == "": return 0.0
-    # Håndterer både punktum og komma som decimal-separator
-    s = str(val).replace('.', '').replace(',', '.')
+    s = str(val).strip()
+    # Håndtering af europæisk format (1.500,00) vs US format (1500.00)
+    if "," in s and "." in s:
+        s = s.replace(".", "").replace(",", ".")
+    elif "," in s:
+        s = s.replace(",", ".")
+    
+    # Fjern alt andet end tal og det korrekte punktum
     s = "".join(c for c in s if c.isdigit() or c == '.')
     try: return float(s)
     except: return 0.0
@@ -33,7 +38,7 @@ with col_logo:
     if logo_sti: st.image(logo_sti, width=150)
     else: st.subheader("DEUTZ-FAHR")
 with col_title:
-    st.title("Intern Serviceberegner & Kundekontrakt")
+    st.title("Serviceberegner & Kundekontrakt")
 
 st.divider()
 
@@ -48,7 +53,7 @@ else:
         st.sidebar.header("🔧 Indstillinger")
         model_valg = st.sidebar.selectbox("Vælg Model", modeller)
         timepris = st.sidebar.number_input("Værkstedstimepris (DKK)", value=750, step=25)
-        ordretype = st.sidebar.radio("Reservedelspris", ["Brutto", "Haste", "Uge", "Måned"])
+        ordretype = st.sidebar.radio("Prisliste (Reservedele)", ["Brutto", "Haste", "Uge", "Måned"])
         avance = st.sidebar.slider("Avance på dele (%)", 0, 50, 0)
         
         st.sidebar.divider()
@@ -99,66 +104,62 @@ else:
                     v_idx = df[df[besk_kol].astype(str).str.contains('Væsker', case=False, na=False)].index
                     v_s = v_idx[0] if len(v_idx) > 0 else 9999
                     
-                    t_res, t_fluid, t_div, t_arb = 0.0, 0.0, 0.0, 0.0
+                    total_sum = {"res": 0.0, "fluid": 0.0, "div": 0.0, "arb": 0.0}
                     
                     for i in hist_int:
-                        mask = df[i].astype(str).replace(['nan', 'None', ''], None).notna()
+                        # Filtrer rækker for dette interval
+                        mask = df[i].astype(str).str.strip().replace(['nan', 'None', ''], None).notna()
                         current_df = df[mask].copy()
                         
-                        # Filtrering: Flyt specifikke ting til Diverse og fjern CSV'ens egen "Diverse" række
-                        is_div = current_df[besk_kol].str.contains('|'.join(DIVERSE_SØGEORD + ["Diverse"]), case=False, na=False)
-                        interval_div_items = current_df[is_div & ~current_df[besk_kol].str.contains("Diverse", case=False)]
-                        remaining_items = current_df[~is_div]
+                        # Find diverse ting (D-Tech osv) og sorter den rå "Diverse" række fra CSV'en fra
+                        # for at undgå dobbelt konfekt med dit faste tillæg.
+                        is_special_div = current_df[besk_kol].astype(str).str.contains('|'.join(DIVERSE_SØGEORD), case=False, na=False)
+                        is_csv_div_row = current_df[besk_kol].astype(str).str.strip().str.lower() == "diverse"
+                        
+                        special_div_items = current_df[is_special_div].copy()
+                        main_items = current_df[~(is_special_div | is_csv_div_row)].copy()
 
                         with st.expander(f"🔍 Se indhold for {i}"):
-                            # --- RESERVEDELE (MED VARENR) ---
+                            # --- 1. RESERVEDELE ---
                             st.write("**Reservedele**")
-                            res_df = remaining_items[remaining_items.index < v_s]
-                            res_cols = [c for c in [besk_kol, vare_kol, 'Antal', 'Enhed', ordretype] if c in df.columns]
-                            st.table(res_df[res_cols])
+                            res_df = main_items[main_items.index < v_s]
+                            st.table(res_df[[besk_kol, vare_kol, 'Antal', 'Enhed', ordretype]])
                             
-                            # --- VÆSKER (UDEN VARENR) ---
+                            # --- 2. VÆSKER ---
                             st.write("**Væsker (Salgspris Univar)**")
-                            fluid_df = remaining_items[remaining_items.index > v_s]
-                            fluid_df = fluid_df[~fluid_df[besk_kol].astype(str).str.strip().str.lower().isin(["none", "nan", ""])]
-                            # Omdøber kolonnen for visning
+                            fluid_df = main_items[main_items.index > v_s]
                             fluid_view = fluid_df[[besk_kol, 'Antal', 'Enhed', pris_kol_h]].copy()
                             fluid_view.columns = [besk_kol, 'Antal', 'Enhed', 'Salgspris Univar']
                             st.table(fluid_view)
                             
-                            # --- DIVERSE (UDEN VARENR) ---
+                            # --- 3. DIVERSE ---
                             st.write("**Diverse**")
-                            div_list = []
-                            for _, row in interval_div_items.iterrows():
-                                div_list.append({
-                                    besk_kol: row[besk_kol],
-                                    "Antal": row["Antal"],
-                                    "Pris": rens_tal(row[pris_kol_h])
-                                })
-                            # Tilføj den faste post på 500 kr
-                            div_list.append({besk_kol: "Diverse tillæg (fast)", "Antal": 1, "Pris": FAST_DIVERSE_TILLAEG})
-                            st.table(pd.DataFrame(div_list))
+                            div_rows = []
+                            for _, row in special_div_items.iterrows():
+                                div_rows.append({besk_kol: row[besk_kol], "Antal": row["Antal"], "Pris": rens_tal(row[pris_kol_h])})
+                            div_rows.append({besk_kol: "Diverse tillæg (fast)", "Antal": 1, "Pris": FAST_DIVERSE_TILLAEG})
+                            st.table(pd.DataFrame(div_rows))
 
-                            # Beregninger
+                            # Beregn summer
                             c_res = (res_df[ordretype].apply(rens_tal) * res_df['Antal'].apply(rens_tal) * (1 + avance/100)).sum()
                             c_fluid = (fluid_df[pris_kol_h].apply(rens_tal) * fluid_df['Antal'].apply(rens_tal)).sum()
-                            c_div = sum(item["Pris"] for item in div_list)
+                            c_div = sum(d["Pris"] for d in div_rows)
                             
-                            t_res += c_res
-                            t_fluid += c_fluid
-                            t_div += c_div
-                            t_arb += (bruger_timer[i] * timepris)
+                            total_sum["res"] += c_res
+                            total_sum["fluid"] += c_fluid
+                            total_sum["div"] += c_div
+                            total_sum["arb"] += (bruger_timer[i] * timepris)
 
-                    total_omk = t_res + t_fluid + t_div + t_arb
-                    cph = total_omk / valgt_t if valgt_t > 0 else 0
+                    total_ samlet = sum(total_sum.values())
+                    cph = total_samlet / valgt_t if valgt_t > 0 else 0
 
                     st.write("---")
                     st.write("### 3. Samlet Oversigt")
                     c1, c2, c3, c4 = st.columns(4)
-                    c1.metric("Reservedele", f"{t_res:,.2f} kr.")
-                    c2.metric("Væsker (Univar)", f"{t_fluid:,.2f} kr.")
-                    c3.metric("Diverse & Arbejde", f"{(t_div + t_arb):,.2f} kr.")
-                    c4.metric("TOTAL OMK.", f"{total_omk:,.2f} kr.")
+                    c1.metric("Reservedele", f"{total_sum['res']:,.2f} kr.")
+                    c2.metric("Væsker (Univar)", f"{total_sum['fluid']:,.2f} kr.")
+                    c3.metric("Diverse & Arbejde", f"{(total_sum['div'] + total_sum['arb']):,.2f} kr.")
+                    c4.metric("TOTAL OMK.", f"{total_samlet:,.2f} kr.")
                     
                     st.success(f"**Resultat: {cph:,.2f} DKK pr. driftstime**")
 
