@@ -1,20 +1,13 @@
 import sys
-# Her "snyder" vi systemet så underskrifts-modulet tror alt er normalt
+# --- FIX FOR PYTHON 3.13+ (imghdr er fjernet fra Python) ---
 try:
     import imghdr
 except ImportError:
     from unittest.mock import MagicMock
     mock_imghdr = MagicMock()
-    # Vi fortæller Python at 'imghdr' bare er denne tomme boks
+    # Vi giver mock-objektet de funktioner, som modulerne forventer
+    mock_imghdr.what.return_value = None
     sys.modules["imghdr"] = mock_imghdr
-
-import streamlit as st
-import pandas as pd
-import os
-from datetime import datetime
-from streamlit_drawable_canvas import st_canvas
-
-# ... resten af din kode fortsætter herfra
 
 import streamlit as st
 import pandas as pd
@@ -27,17 +20,16 @@ st.set_page_config(page_title="Deutz-Fahr Serviceaftale", layout="wide")
 
 # --- STYRING AF MAPPER OG LOGO ---
 DATA_MAPPE = "service_ark"
-FAST_DIVERSE_GEBYR = 500.0  # Din faste instruks
+FAST_DIVERSE_GEBYR = 500.0 
 
 def find_logo():
-    # Leder efter logoet de to mest sandsynlige steder
     mulige_stier = ["logo.png", os.path.join(DATA_MAPPE, "logo.png")]
     for sti in mulige_stier:
         if os.path.exists(sti):
             return sti
     return None
 
-# --- TOP SEKTION: LOGO OG TITEL ---
+# --- TOP SEKTION ---
 col1, col2 = st.columns([1, 3])
 logo_sti = find_logo()
 
@@ -49,153 +41,106 @@ with col1:
 
 with col2:
     st.markdown("<h1 style='margin-bottom: 0; color: #367c2b;'>Serviceberegner & Digital Aftale</h1>", unsafe_allow_html=True)
-    st.markdown("<p style='font-style: italic; color: gray;'>Professionel driftsøkonomi og kontraktstyring</p>", unsafe_allow_html=True)
 
 st.divider()
 
-# Find filer
+# Find filer og indlæs data
 if not os.path.exists(DATA_MAPPE):
-    st.error(f"Mappen '{DATA_MAPPE}' blev ikke fundet. Tjek din GitHub-struktur.")
-    modeller_raw = []
+    st.error(f"Mappen '{DATA_MAPPE}' ikke fundet.")
 else:
-    filer_i_mappe = [f for f in os.listdir(DATA_MAPPE) if f.endswith('.csv')]
-    modeller_raw = sorted([f.replace('.csv', '') for f in filer_i_mappe])
+    filer = [f for f in os.listdir(DATA_MAPPE) if f.endswith('.csv')]
+    modeller = sorted([f.replace('.csv', '') for f in filer])
 
-if not modeller_raw:
-    st.warning("Ingen CSV-filer fundet i mappen 'service_ark'.")
-else:
-    # --- SIDEBAR: KONFIGURATION ---
-    st.sidebar.header("1. Maskine & Priser")
-    model_visning = {f"Deutz-Fahr {m}": m for m in modeller_raw}
-    valgt_visningsnavn = st.sidebar.selectbox("Vælg Traktormodel", list(model_visning.keys()))
-    model_valg = model_visning[valgt_visningsnavn]
-    
-    timepris = st.sidebar.number_input("Værkstedstimepris (DKK)", value=750, step=25)
-    ordretype = st.sidebar.radio("Pristype for filtre", ["Brutto", "Haste", "Uge", "Måned"])
-    avance = st.sidebar.slider("Avance på reservedele (%)", 0, 50, 0)
+    if modeller:
+        st.sidebar.header("1. Maskine & Priser")
+        model_valg = st.sidebar.selectbox("Vælg Traktormodel", modeller)
+        timepris = st.sidebar.number_input("Værkstedstimepris (DKK)", value=750)
+        ordretype = st.sidebar.radio("Pristype", ["Brutto", "Haste", "Uge", "Måned"])
+        avance = st.sidebar.slider("Avance på reservedele (%)", 0, 50, 0)
 
-    st.sidebar.divider()
-    st.sidebar.header("2. Kundeinformation")
-    forhandler_navn = st.sidebar.text_input("Forhandler", value="Indtast forhandler")
-    kunde_navn = st.sidebar.text_input("Kundenavn")
-    kunde_adr = st.sidebar.text_input("Adresse / By")
-    stelnummer = st.sidebar.text_input("Stelnummer / Chassis nr.")
+        st.sidebar.divider()
+        st.sidebar.header("2. Kundeinformation")
+        forhandler = st.sidebar.text_input("Forhandler", "Indtast forhandler")
+        kunde = st.sidebar.text_input("Kundenavn")
+        kunde_adr = st.sidebar.text_input("Adresse / By")
+        stelnummer = st.sidebar.text_input("Stelnummer")
 
-    valgt_fil = os.path.join(DATA_MAPPE, f"{model_valg}.csv")
-
-    try:
-        # Indlæs data
-        raw_df = pd.read_csv(valgt_fil, sep=';', encoding='latin-1', header=None)
-        header_row_index = 0
-        for i, row in raw_df.iterrows():
-            if row.astype(str).str.contains('timer', case=False).any():
-                header_row_index = i
-                break
-        
-        df = pd.read_csv(valgt_fil, sep=';', encoding='latin-1', header=header_row_index)
-        df.columns = [str(c).strip() for c in df.columns]
-        beskrivelse_kol = df.columns[0]
-        pris_kol_h = df.columns[7]
-        interval_kolonner = [c for c in df.columns if "timer" in c.lower()]
-        
-        def rens_til_tal(val):
-            if pd.isna(val): return 0.0
-            s = "".join(c for c in str(val) if c.isdigit() or c in ",.")
-            s = s.replace(',', '.').strip()
-            try: return float(s)
-            except: return 0.0
-
-        if interval_kolonner:
-            st.sidebar.divider()
-            st.sidebar.header("3. Aftale Stop-punkt")
-            valgt_interval = st.sidebar.selectbox("Vælg timetal for beregning", interval_kolonner)
-            valgt_timer_tal = int("".join(filter(str.isdigit, valgt_interval)))
+        # Indlæs den specifikke CSV
+        valgt_fil = os.path.join(DATA_MAPPE, f"{model_valg}.csv")
+        try:
+            df_raw = pd.read_csv(valgt_fil, sep=';', encoding='latin-1', header=None)
+            h_idx = 0
+            for i, row in df_raw.iterrows():
+                if row.astype(str).str.contains('timer', case=False).any():
+                    h_idx = i
+                    break
+            df = pd.read_csv(valgt_fil, sep=';', encoding='latin-1', header=h_idx)
+            df.columns = [str(c).strip() for c in df.columns]
             
-            # Logik: Kun services før stop-punktet medregnes i prisen
-            historiske_intervaller = [col for col in interval_kolonner if int("".join(filter(str.isdigit, col))) < valgt_timer_tal]
-            
-            # --- ARBEJDSTIMER INPUT ---
-            bruger_timer = {}
-            mask_arbejd = df[beskrivelse_kol].astype(str).str.contains('Arbejd', case=False, na=False)
-            if historiske_intervaller:
-                with st.sidebar.expander("Ret timer for tidligere services"):
-                    for interval in historiske_intervaller:
-                        std_hist = rens_til_tal(df[mask_arbejd][interval].values[0]) if mask_arbejd.any() else 0.0
-                        t_hist = st.number_input(f"Timer v. {interval}", value=float(std_hist), step=0.5, key=f"hist_{interval}")
-                        bruger_timer[interval] = t_hist
+            besk_kol = df.columns[0]
+            pris_kol = df.columns[7]
+            int_kols = [c for c in df.columns if "timer" in c.lower()]
 
-            # --- BEREGNING AF AKKUMULERET PRIS ---
-            v_idx = df[df[beskrivelse_kol].astype(str).str.contains('Væsker', case=False, na=False)].index
-            v_start = v_idx[0] if len(v_idx) > 0 else 9999
-            
-            tot_res, tot_vd, tot_arb = 0.0, 0.0, 0.0
+            def rens(val):
+                if pd.isna(val): return 0.0
+                s = "".join(c for c in str(val) if c.isdigit() or c in ",.")
+                return float(s.replace(',', '.').strip()) if s else 0.0
 
-            for interval in historiske_intervaller:
-                m_mask = df[interval].astype(str).replace(['nan', 'None', ''], None).notna()
-                # Reservedele
-                res_p = df[(df.index < v_start) & m_mask].copy()
-                tot_res += (res_p[ordretype].apply(rens_til_tal) * res_p['Antal'].apply(rens_til_tal) * (1 + avance/100)).sum()
-                # Væsker & Diverse (inkl. dine faste 500 kr.)
-                vd_p = df[(df.index > v_start) & m_mask].copy()
-                vd_p = vd_p[~vd_p[beskrivelse_kol].astype(str).str.strip().str.lower().isin(["none", "nan", "", "diverse"])]
-                for _, r in vd_p.iterrows():
-                    tot_vd += rens_til_tal(r[pris_kol_h]) * rens_til_tal(r['Antal'])
-                tot_vd += FAST_DIVERSE_GEBYR # Fast omkostning pr. interval
-                # Arbejdsløn
-                tot_arb += (bruger_timer[interval] * timepris)
-
-            tot_alt = tot_res + tot_vd + tot_arb
-            pris_pr_t = tot_alt / valgt_timer_tal if valgt_timer_tal > 0 else 0
-
-            # --- VISNING (TABS) ---
-            tab1, tab2 = st.tabs(["📊 Økonomisk Overblik", "✍️ Digital Serviceaftale"])
-
-            with tab1:
-                st.subheader(f"Beregning: 0 - {valgt_timer_tal} timer")
-                st.markdown(f"Herunder ses de akkumulerede omkostninger. Bemærk at det valgte {valgt_interval} service **ikke** er medregnet i timeprisen.")
+            if int_kols:
+                st.sidebar.divider()
+                valgt_int = st.sidebar.selectbox("Aftale stop-punkt", int_kols)
+                valgt_t = int("".join(filter(str.isdigit, valgt_int)))
                 
-                c1, c2, c3 = st.columns(3)
-                c1.metric("Reservedele total", f"{tot_res:,.2f} DKK")
-                c2.metric("Væsker/Diverse total", f"{tot_vd:,.2f} DKK")
-                c3.metric("Arbejdsløn total", f"{tot_arb:,.2f} DKK")
-
-                st.markdown(f"<div style='margin-top:20px; border: 2px solid #367c2b; padding: 20px; border-radius: 10px; text-align: center; background-color: #f9f9f9;'>"
-                            f"<span style='font-size: 1.2em; font-weight: bold;'>REEL PRIS PR. DRIFTSTIME: </span>"
-                            f"<span style='font-size: 2.2em; font-weight: bold; color: #367c2b;'>{pris_pr_t:,.2f} DKK/t</span>"
-                            f"</div>", unsafe_allow_html=True)
-
-            with tab2:
-                # KONTRAKT LAYOUT
-                st.markdown(f"""
-                <div style="padding: 30px; border: 1px solid #ccc; background-color: white; color: black; font-family: Arial;">
-                    <h2 style="text-align: center; color: #367c2b;">SERVICEAFTALE</h2>
-                    <table style="width: 100%;">
-                        <tr><td><b>Forhandler:</b> {forhandler_navn}</td><td><b>Kunde:</b> {kunde_navn}</td></tr>
-                        <tr><td><b>Model:</b> {valgt_visningsnavn}</td><td><b>Stelnummer:</b> {stelnummer}</td></tr>
-                    </table>
-                    <hr>
-                    <p>Denne aftale omfatter alle foreskrevne serviceintervaller frem til traktoren runder <b>{valgt_timer_tal} timer</b>.</p>
-                    <p><b>Aftalt pris pr. driftstime: {pris_pr_t:,.2f} DKK (Ekskl. moms)</b></p>
-                </div>
-                """, unsafe_allow_html=True)
+                # Beregning af historik (alt før stop-punktet)
+                hist_int = [c for c in int_kols if int("".join(filter(str.isdigit, c))) < valgt_t]
                 
-                st.write("### Underskrifter")
-                col_s1, col_s2 = st.columns(2)
+                v_idx = df[df[besk_kol].astype(str).str.contains('Væsker', case=False, na=False)].index
+                v_s = v_idx[0] if len(v_idx) > 0 else 9999
                 
-                with col_s1:
-                    st.caption(f"Forhandler: {forhandler_navn}")
-                    st_canvas(fill_color="rgba(255, 255, 255, 0)", stroke_width=2, stroke_color="black", 
-                              background_color="#eee", height=150, width=300, drawing_mode="freedraw", key="canvas1")
-                
-                with col_s2:
-                    st.caption(f"Kunde: {kunde_navn}")
-                    st_canvas(fill_color="rgba(255, 255, 255, 0)", stroke_width=2, stroke_color="blue", 
-                              background_color="#eee", height=150, width=300, drawing_mode="freedraw", key="canvas2")
-                
-                if st.button("Udfør Aftale"):
-                    st.balloons()
-                    st.success("Aftalen er bekræftet digitalt.")
+                t_res, t_vd, t_arb = 0.0, 0.0, 0.0
+                for i in hist_int:
+                    m = df[i].astype(str).replace(['nan', 'None', ''], None).notna()
+                    res_df = df[(df.index < v_s) & m]
+                    t_res += (res_df[ordretype].apply(rens) * res_df['Antal'].apply(rens) * (1 + avance/100)).sum()
+                    
+                    vd_df = df[(df.index > v_s) & m]
+                    vd_df = vd_df[~vd_df[besk_kol].astype(str).str.strip().str.lower().isin(["none", "nan", "", "diverse"])]
+                    t_vd += (vd_df[pris_kol].apply(rens) * vd_df['Antal'].apply(rens)).sum()
+                    t_vd += FAST_DIVERSE_GEBYR # Din faste instruks
+                    
+                    m_arb = df[besk_kol].astype(str).str.contains('Arbejd', case=False, na=False)
+                    t_std = rens(df[m_arb][i].values[0]) if m_arb.any() else 0.0
+                    t_arb += (t_std * timepris)
 
-    except Exception as e:
-        st.error(f"Der opstod en fejl i databehandlingen: {e}")
+                total = t_res + t_vd + t_arb
+                cph = total / valgt_t if valgt_t > 0 else 0
 
+                tab1, tab2 = st.tabs(["📊 Økonomi", "✍️ Serviceaftale"])
+
+                with tab1:
+                    st.metric("Serviceomkostning pr. time", f"{cph:,.2f} DKK/t")
+                    st.write(f"Akkumuleret total for 0-{valgt_t} timer: **{total:,.2f} DKK**")
+
+                with tab2:
+                    st.markdown(f"""
+                    <div style="padding: 20px; border: 1px solid #ccc; background-color: white; color: black;">
+                        <h2 style="text-align: center; color: #367c2b;">SERVICEAFTALE</h2>
+                        <p><b>Model:</b> Deutz-Fahr {model_valg} | <b>Stelnummer:</b> {stelnummer}</p>
+                        <p><b>Kunde:</b> {kunde}</p>
+                        <p><b>Pris pr. driftstime: {cph:,.2f} DKK (Ekskl. moms)</b></p>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    col_s1, col_s2 = st.columns(2)
+                    with col_s1:
+                        st.caption("Forhandler")
+                        st_canvas(stroke_width=2, stroke_color="black", background_color="#eee", height=100, width=250, key="c1")
+                    with col_s2:
+                        st.caption("Kunde")
+                        st_canvas(stroke_width=2, stroke_color="blue", background_color="#eee", height=100, width=250, key="c2")
+                    
+                    if st.button("Udfør"):
+                        st.success("Aftale bekræftet!")
+
+        except Exception as e:
+            st.error(f"Fejl: {e}")
