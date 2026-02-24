@@ -1,4 +1,2 @@
 pandas
 streamlit
-streamlit-drawable-canvas
-altair==4.2.2
