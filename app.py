@@ -120,7 +120,7 @@ else:
                         main_items = current_df[~(is_special_div | is_csv_div_row)].copy()
 
                         with st.expander(f"🔍 Se indhold for {i}"):
-                            # Tjek kolonner dynamisk
+                            # Tjek kolonner dynamisk (kun for dem der kommer direkte fra CSV)
                             def safe_cols(wanted): return [c for c in wanted if c in df.columns]
 
                             # --- 1. RESERVEDELE ---
@@ -134,11 +134,13 @@ else:
                             fluid_df['Enhedspris'] = fluid_df[pris_kol_h].apply(rens_tal)
                             fluid_df['Total'] = fluid_df['Enhedspris'] * fluid_df['Antal'].apply(rens_tal)
                             
-                            fluid_view = fluid_df[safe_cols([besk_kol, 'Antal', 'Enhed', 'Enhedspris', 'Total'])]
+                            # Vi sammensætter visningskolonnerne, så de nye beregnede kolonner ikke bliver sorteret fra
+                            fluid_visnings_kolonner = safe_cols([besk_kol, 'Antal', 'Enhed']) + ['Enhedspris', 'Total']
+                            fluid_view = fluid_df[fluid_visnings_kolonner]
                             st.table(fluid_view.style.format({'Enhedspris': '{:,.2f}', 'Total': '{:,.2f}'}))
                             
                             # --- 3. DIVERSE ---
-                            st.write("**Diverse (Priser fra CSV + Fast tillæg)**")
+                            st.write("**Diverse**")
                             div_rows = []
                             for _, row in special_div_items.iterrows():
                                 p = rens_tal(row[pris_kol_h])
