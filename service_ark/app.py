@@ -179,3 +179,4 @@ else:
 
         except Exception as e:
             st.error(f"Der skete en fejl i beregningen: {e}")
+
