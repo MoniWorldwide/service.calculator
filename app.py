@@ -17,32 +17,25 @@ def find_logo():
     return None
 
 def rens_tal(val):
-    """
-    Ekstremt robust tal-rensning. 
-    Håndterer både '500.00', '500,00' og '1.250,00'.
-    """
+    """Håndterer danske talformater og retter fejllæsning af punktum (500.000 -> 500)"""
     if pd.isna(val) or str(val).strip() == "": return 0.0
     s = str(val).strip()
     
-    # Hvis formatet er dansk (1.250,50), fjern punktum og skift komma til punktum
+    # Hvis formatet er 1.250,50
     if "." in s and "," in s:
         s = s.replace(".", "").replace(",", ".")
-    # Hvis der kun er komma (500,00), skift til punktum
+    # Hvis formatet er 500,00
     elif "," in s:
         s = s.replace(",", ".")
-    # Hvis der kun er punktum, og der er 3 cifre efter det (500.000), 
-    # så er det en tusindtals-fejl fra CSV-læsningen. Fjern det.
+    # Hvis formatet er 500.000 (fejlagtigt læst som tusindtal)
     elif "." in s:
         dele = s.split('.')
-        if len(dele[-1]) == 3:
+        if len(dele[-1]) == 3: # Typisk tegn på tusindtals-separator
             s = s.replace(".", "")
             
-    # Rens alt andet end tal og punktum
     s = "".join(c for c in s if c.isdigit() or c == '.')
-    try:
-        return float(s)
-    except:
-        return 0.0
+    try: return float(s)
+    except: return 0.0
 
 # --- 2. HEADER ---
 col_logo, col_title = st.columns([1, 3])
@@ -62,7 +55,6 @@ else:
     modeller = sorted([f.replace('.csv', '') for f in filer])
 
     if modeller:
-        # SIDEBAR
         st.sidebar.header("🔧 Indstillinger")
         model_valg = st.sidebar.selectbox("Vælg Model", modeller)
         timepris = st.sidebar.number_input("Værkstedstimepris (DKK)", value=750, step=25)
@@ -71,7 +63,6 @@ else:
 
         valgt_fil = os.path.join(DATA_MAPPE, f"{model_valg}.csv")
         try:
-            # Læs CSV - vi finder overskriftsrækken dynamisk
             df_raw = pd.read_csv(valgt_fil, sep=';', encoding='latin-1', header=None)
             h_idx = 0
             for i, row in df_raw.iterrows():
@@ -82,9 +73,7 @@ else:
             df = pd.read_csv(valgt_fil, sep=';', encoding='latin-1', header=h_idx)
             df.columns = [str(c).strip() for c in df.columns]
             
-            besk_kol = df.columns[0]
-            vare_kol = df.columns[1] 
-            pris_kol_h = df.columns[7] # Kolonne H (Univar priser)
+            besk_kol, vare_kol, pris_kol_h = df.columns[0], df.columns[1], df.columns[7]
             int_kols = [c for c in df.columns if "timer" in c.lower()]
 
             if int_kols:
@@ -97,7 +86,7 @@ else:
                 with tab_admin:
                     st.subheader(f"Kalkulation: {model_valg}")
                     
-                    # 1. Arbejdstimer
+                    st.write("### 1. Arbejdstimer pr. service")
                     m_arb_row = df[df[besk_kol].astype(str).str.contains('Arbejd', case=False, na=False)]
                     bruger_timer = {}
                     t_cols = st.columns(len(hist_int))
@@ -106,7 +95,9 @@ else:
                         with t_cols[idx]:
                             bruger_timer[interval] = st.number_input(f"Timer {interval}", value=std_t, step=0.5, key=f"t_{interval}")
 
-                    # 2. Specifikation
+                    st.write("---")
+                    st.write("### 2. Specifikation af indhold")
+                    
                     v_idx = df[df[besk_kol].astype(str).str.contains('Væsker', case=False, na=False)].index
                     v_s = v_idx[0] if len(v_idx) > 0 else 9999
                     
@@ -123,42 +114,38 @@ else:
                         main_items = current_df[~(is_special_div | is_csv_div_row)].copy()
 
                         with st.expander(f"🔍 Se indhold for {i}"):
-                            # --- RESERVEDELE ---
+                            # Tjek kolonner
+                            def safe_cols(wanted): return [c for c in wanted if c in df.columns]
+
+                            # --- 1. RESERVEDELE ---
                             st.write("**Reservedele**")
                             res_df = main_items[main_items.index < v_s]
-                            res_cols = [c for c in [besk_kol, vare_kol, 'Antal', 'Enhed', ordretype] if c in df.columns]
-                            st.table(res_df[res_cols])
+                            st.table(res_df[safe_cols([besk_kol, vare_kol, 'Antal', 'Enhed', ordretype])])
                             
-                            # --- VÆSKER (MED ENHEDSPRIS & TOTAL) ---
-                            st.write("**Væsker**")
+                            # --- 2. VÆSKER ---
+                            st.write("**Væsker (Foreslået salgspris fra Univar)**")
                             fluid_df = main_items[main_items.index > v_s].copy()
-                            # Beregn priser specifikt for visning
                             fluid_df['Enhedspris'] = fluid_df[pris_kol_h].apply(rens_tal)
-                            fluid_df['Totalpris'] = fluid_df['Enhedspris'] * fluid_df['Antal'].apply(rens_tal)
+                            fluid_df['Total'] = fluid_df['Enhedspris'] * fluid_df['Antal'].apply(rens_tal)
                             
-                            fluid_view_cols = [c for c in [besk_kol, 'Antal', 'Enhed', 'Enhedspris', 'Totalpris'] if c in fluid_df.columns or c in ['Enhedspris', 'Totalpris']]
-                            st.table(fluid_df[fluid_view_cols].style.format({'Enhedspris': '{:,.2f}', 'Totalpris': '{:,.2f}'}))
+                            fluid_view = fluid_df[safe_cols([besk_kol, 'Antal', 'Enhed', 'Enhedspris', 'Total'])]
+                            st.table(fluid_view.style.format({'Enhedspris': '{:,.2f}', 'Total': '{:,.2f}'}))
                             
-                            # --- DIVERSE ---
-                            st.write("**Diverse**")
+                            # --- 3. DIVERSE ---
+                            st.write("**Diverse (Priser fra CSV + Fast tillæg)**")
                             div_rows = []
                             for _, row in special_div_items.iterrows():
                                 p = rens_tal(row[pris_kol_h])
                                 div_rows.append({besk_kol: row[besk_kol], "Antal": row.get('Antal', 1), "Pris": p})
-                            # Tilføj dit faste tillæg på 500 kr.
                             div_rows.append({besk_kol: "Diverse tillæg (fast)", "Antal": 1, "Pris": FAST_DIVERSE_TILLAEG})
                             
                             df_div_vis = pd.DataFrame(div_rows)
                             st.table(df_div_vis.style.format({'Pris': '{:,.2f}'}))
 
                             # Beregn summer
-                            c_res = (res_df[ordretype].apply(rens_tal) * res_df['Antal'].apply(rens_tal) * (1 + avance/100)).sum()
-                            c_fluid = fluid_df['Totalpris'].sum()
-                            c_div = sum(d['Pris'] for d in div_rows)
-                            
-                            total_sum["res"] += c_res
-                            total_sum["fluid"] += c_fluid
-                            total_sum["div"] += c_div
+                            total_sum["res"] += (res_df[ordretype].apply(rens_tal) * res_df['Antal'].apply(rens_tal) * (1 + avance/100)).sum()
+                            total_sum["fluid"] += fluid_df['Total'].sum()
+                            total_sum["div"] += sum(d["Pris"] for d in div_rows)
                             total_sum["arb"] += (bruger_timer[i] * timepris)
 
                     total_samlet = sum(total_sum.values())
@@ -168,16 +155,12 @@ else:
                     st.write("### 3. Samlet Oversigt")
                     c1, c2, c3, c4 = st.columns(4)
                     c1.metric("Reservedele", f"{total_sum['res']:,.2f} kr.")
-                    c2.metric("Væsker", f"{total_sum['fluid']:,.2f} kr.")
+                    c2.metric("Væsker (Univar)", f"{total_sum['fluid']:,.2f} kr.")
                     c3.metric("Diverse & Arbejde", f"{(total_sum['div'] + total_sum['arb']):,.2f} kr.")
                     c4.metric("TOTAL OMK.", f"{total_samlet:,.2f} kr.")
                     
                     st.success(f"**Resultat: {cph:,.2f} DKK pr. driftstime**")
 
                 with tab_kunde:
-                    # (Kundekontrakt layout...)
-                    st.subheader("Kundekontrakt")
-                    st.info("Her genereres kundens kopi baseret på ovenstående beregning.")
-
-        except Exception as e:
-            st.error(f"Fejl ved beregning: {e}")
+                    st.info("Genererer kundekontrakt...")
+                    # Layout herfra som tidligere...
