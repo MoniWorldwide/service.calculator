@@ -17,15 +17,12 @@ def find_logo():
     return None
 
 def rens_tal(val):
-    """Sikrer korrekt læsning af tal uanset om CSV bruger , eller . som decimal"""
     if pd.isna(val) or str(val).strip() == "": return 0.0
     s = str(val).strip()
-    # Håndtering af format (1.500,00) -> 1500.00
     if "," in s and "." in s:
         s = s.replace(".", "").replace(",", ".")
     elif "," in s:
         s = s.replace(",", ".")
-    
     s = "".join(c for c in s if c.isdigit() or c == '.')
     try: return float(s)
     except: return 0.0
@@ -115,26 +112,36 @@ else:
                         main_items = current_df[~(is_special_div | is_csv_div_row)].copy()
 
                         with st.expander(f"🔍 Se indhold for {i}"):
+                            # Tjek hvilke kolonner der findes før visning
+                            def filter_cols(cols):
+                                return [c for c in cols if c in df.columns]
+
                             # --- 1. RESERVEDELE ---
                             st.write("**Reservedele**")
                             res_df = main_items[main_items.index < v_s]
-                            st.table(res_df[[besk_kol, vare_kol, 'Antal', 'Enhed', ordretype]])
+                            st.table(res_df[filter_cols([besk_kol, vare_kol, 'Antal', 'Enhed', ordretype])])
                             
                             # --- 2. VÆSKER ---
                             st.write("**Væsker (Salgspris Univar)**")
                             fluid_df = main_items[main_items.index > v_s]
-                            fluid_view = fluid_df[[besk_kol, 'Antal', 'Enhed', pris_kol_h]].copy()
-                            fluid_view.columns = [besk_kol, 'Antal', 'Enhed', 'Salgspris Univar']
+                            fluid_view = fluid_df[filter_cols([besk_kol, 'Antal', 'Enhed', pris_kol_h])].copy()
+                            if pris_kol_h in fluid_view.columns:
+                                fluid_view = fluid_view.rename(columns={pris_kol_h: 'Salgspris Univar'})
                             st.table(fluid_view)
                             
                             # --- 3. DIVERSE ---
                             st.write("**Diverse**")
                             div_rows = []
                             for _, row in special_div_items.iterrows():
-                                div_rows.append({besk_kol: row[besk_kol], "Antal": row["Antal"], "Pris": rens_tal(row[pris_kol_h])})
+                                div_rows.append({
+                                    besk_kol: row[besk_kol], 
+                                    "Antal": row.get("Antal", 1), 
+                                    "Pris": rens_tal(row[pris_kol_h]) if pris_kol_h in df.columns else 0.0
+                                })
                             div_rows.append({besk_kol: "Diverse tillæg (fast)", "Antal": 1, "Pris": FAST_DIVERSE_TILLAEG})
                             st.table(pd.DataFrame(div_rows))
 
+                            # Beregninger
                             c_res = (res_df[ordretype].apply(rens_tal) * res_df['Antal'].apply(rens_tal) * (1 + avance/100)).sum()
                             c_fluid = (fluid_df[pris_kol_h].apply(rens_tal) * fluid_df['Antal'].apply(rens_tal)).sum()
                             c_div = sum(d["Pris"] for d in div_rows)
