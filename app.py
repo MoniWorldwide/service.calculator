@@ -20,13 +20,12 @@ def rens_tal(val):
     """Sikrer korrekt læsning af tal uanset om CSV bruger , eller . som decimal"""
     if pd.isna(val) or str(val).strip() == "": return 0.0
     s = str(val).strip()
-    # Håndtering af europæisk format (1.500,00) vs US format (1500.00)
+    # Håndtering af format (1.500,00) -> 1500.00
     if "," in s and "." in s:
         s = s.replace(".", "").replace(",", ".")
     elif "," in s:
         s = s.replace(",", ".")
     
-    # Fjern alt andet end tal og det korrekte punktum
     s = "".join(c for c in s if c.isdigit() or c == '.')
     try: return float(s)
     except: return 0.0
@@ -49,7 +48,6 @@ else:
     modeller = sorted([f.replace('.csv', '') for f in filer])
 
     if modeller:
-        # SIDEBAR
         st.sidebar.header("🔧 Indstillinger")
         model_valg = st.sidebar.selectbox("Vælg Model", modeller)
         timepris = st.sidebar.number_input("Værkstedstimepris (DKK)", value=750, step=25)
@@ -82,7 +80,7 @@ else:
             if int_kols:
                 valgt_int = st.sidebar.selectbox("Aftale stop-punkt (Timer)", int_kols)
                 valgt_t = int("".join(filter(str.isdigit, valgt_int)))
-                hist_int = [c for c in int_kols if int("".join(filter(str.isdigit, c))) < valgt_t]
+                hist_int = [c for c in int_kols if int("".join(filter(str.isdigit, c))) <= valgt_t]
 
                 tab_admin, tab_kunde = st.tabs(["👨‍🔧 INTERN BEREGNING", "📜 KUNDE KONTRAKT"])
 
@@ -107,12 +105,9 @@ else:
                     total_sum = {"res": 0.0, "fluid": 0.0, "div": 0.0, "arb": 0.0}
                     
                     for i in hist_int:
-                        # Filtrer rækker for dette interval
                         mask = df[i].astype(str).str.strip().replace(['nan', 'None', ''], None).notna()
                         current_df = df[mask].copy()
                         
-                        # Find diverse ting (D-Tech osv) og sorter den rå "Diverse" række fra CSV'en fra
-                        # for at undgå dobbelt konfekt med dit faste tillæg.
                         is_special_div = current_df[besk_kol].astype(str).str.contains('|'.join(DIVERSE_SØGEORD), case=False, na=False)
                         is_csv_div_row = current_df[besk_kol].astype(str).str.strip().str.lower() == "diverse"
                         
@@ -140,7 +135,6 @@ else:
                             div_rows.append({besk_kol: "Diverse tillæg (fast)", "Antal": 1, "Pris": FAST_DIVERSE_TILLAEG})
                             st.table(pd.DataFrame(div_rows))
 
-                            # Beregn summer
                             c_res = (res_df[ordretype].apply(rens_tal) * res_df['Antal'].apply(rens_tal) * (1 + avance/100)).sum()
                             c_fluid = (fluid_df[pris_kol_h].apply(rens_tal) * fluid_df['Antal'].apply(rens_tal)).sum()
                             c_div = sum(d["Pris"] for d in div_rows)
@@ -150,7 +144,7 @@ else:
                             total_sum["div"] += c_div
                             total_sum["arb"] += (bruger_timer[i] * timepris)
 
-                    total_ samlet = sum(total_sum.values())
+                    total_samlet = sum(total_sum.values())
                     cph = total_samlet / valgt_t if valgt_t > 0 else 0
 
                     st.write("---")
