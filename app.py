@@ -60,6 +60,12 @@ else:
         timepris = st.sidebar.number_input("Værkstedstimepris (DKK)", value=750, step=25)
         ordretype = st.sidebar.radio("Reservedelspris", ["Brutto", "Haste", "Uge", "Måned"])
         avance = st.sidebar.slider("Avance på dele (%)", 0, 50, 0)
+        
+        st.sidebar.divider()
+        st.sidebar.header("👤 Kundeinformation")
+        forhandler = st.sidebar.text_input("Forhandler", "Indtast navn")
+        kunde_navn = st.sidebar.text_input("Kunde")
+        stelnummer = st.sidebar.text_input("Stelnummer")
 
         valgt_fil = os.path.join(DATA_MAPPE, f"{model_valg}.csv")
         try:
@@ -114,7 +120,7 @@ else:
                         main_items = current_df[~(is_special_div | is_csv_div_row)].copy()
 
                         with st.expander(f"🔍 Se indhold for {i}"):
-                            # Tjek kolonner
+                            # Tjek kolonner dynamisk
                             def safe_cols(wanted): return [c for c in wanted if c in df.columns]
 
                             # --- 1. RESERVEDELE ---
@@ -137,6 +143,7 @@ else:
                             for _, row in special_div_items.iterrows():
                                 p = rens_tal(row[pris_kol_h])
                                 div_rows.append({besk_kol: row[besk_kol], "Antal": row.get('Antal', 1), "Pris": p})
+                            # Indsæt det faste diverse tillæg
                             div_rows.append({besk_kol: "Diverse tillæg (fast)", "Antal": 1, "Pris": FAST_DIVERSE_TILLAEG})
                             
                             df_div_vis = pd.DataFrame(div_rows)
@@ -162,5 +169,26 @@ else:
                     st.success(f"**Resultat: {cph:,.2f} DKK pr. driftstime**")
 
                 with tab_kunde:
-                    st.info("Genererer kundekontrakt...")
-                    # Layout herfra som tidligere...
+                    st.markdown(f"""
+                    <div style="padding: 30px; border: 1px solid #ddd; background-color: white; color: black; font-family: Arial;">
+                        <h2 style="text-align: center; color: #367c2b;">SERVICEAFTALE</h2>
+                        <hr style="border: 1px solid #367c2b;">
+                        <p><b>Model:</b> Deutz-Fahr {model_valg} <span style="float:right"><b>Dato:</b> {datetime.now().strftime('%d-%m-%Y')}</span></p>
+                        <p><b>Kunde:</b> {kunde_navn} | <b>Stelnummer:</b> {stelnummer}</p>
+                        <br>
+                        <p>Denne aftale dækker alle planlagte serviceeftersyn frem til <b>{valgt_t} driftstimer</b>.</p>
+                        <br>
+                        <div style="background-color: #f1f8e9; padding: 25px; border: 1px solid #367c2b; text-align: center;">
+                            <span style="font-size: 1.5em; color: #2e7d32;"><b>FAST PRIS PR. DRIFTSTIME: {cph:,.2f} DKK</b></span><br>
+                            <small>(Ekskl. moms og brændstof)</small>
+                        </div>
+                        <br><br><br>
+                        <div style="display: flex; justify-content: space-between;">
+                            <div style="border-top: 1px solid black; width: 40%; text-align: center;"><br>Forhandler: {forhandler}</div>
+                            <div style="border-top: 1px solid black; width: 40%; text-align: center;"><br>Kunde: {kunde_navn}</div>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+        except Exception as e:
+            st.error(f"Fejl ved beregning: {e}")
