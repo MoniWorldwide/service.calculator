@@ -7,8 +7,9 @@ from datetime import datetime
 st.set_page_config(page_title="Deutz-Fahr Intern Beregner", layout="wide")
 
 DATA_MAPPE = "service_ark"
-# Din faste instruks: 500 DKK til diverse på ALLE modeller/services
+# Fast instruks: 500 DKK til diverse på ALLE services
 FAST_DIVERSE_TILLAEG = 500.0 
+# Søgeord til at flytte rækker til Diverse-tabellen
 DIVERSE_SØGEORD = ["Testudstyr", "D-Tech", "aircon", "Hjælpematerialer"]
 
 def find_logo():
@@ -18,9 +19,10 @@ def find_logo():
     return None
 
 def rens_tal(val):
-    if pd.isna(val): return 0.0
-    s = "".join(c for c in str(val) if c.isdigit() or c in ",.")
-    s = s.replace(',', '.').strip()
+    if pd.isna(val) or str(val).strip() == "": return 0.0
+    # Håndterer både punktum og komma som decimal-separator
+    s = str(val).replace('.', '').replace(',', '.')
+    s = "".join(c for c in s if c.isdigit() or c == '.')
     try: return float(s)
     except: return 0.0
 
@@ -32,7 +34,6 @@ with col_logo:
     else: st.subheader("DEUTZ-FAHR")
 with col_title:
     st.title("Intern Serviceberegner & Kundekontrakt")
-    st.caption("Inkl. varenumre og fuld specifikation af diverse")
 
 st.divider()
 
@@ -68,10 +69,9 @@ else:
             df = pd.read_csv(valgt_fil, sep=';', encoding='latin-1', header=h_idx)
             df.columns = [str(c).strip() for c in df.columns]
             
-            # Kolonne-identifikation
             besk_kol = df.columns[0]
-            vare_kol = df.columns[1] # Varenummer
-            pris_kol_h = df.columns[7] # Kolonne H (Væsker/Diverse)
+            vare_kol = df.columns[1] 
+            pris_kol_h = df.columns[7] 
             int_kols = [c for c in df.columns if "timer" in c.lower()]
 
             if int_kols:
@@ -84,7 +84,6 @@ else:
                 with tab_admin:
                     st.subheader(f"Kalkulation: {model_valg}")
                     
-                    # 1. ARBEJDSTIMER
                     st.write("### 1. Arbejdstimer pr. service")
                     m_arb_row = df[df[besk_kol].astype(str).str.contains('Arbejd', case=False, na=False)]
                     bruger_timer = {}
@@ -94,7 +93,6 @@ else:
                         with t_cols[idx]:
                             bruger_timer[interval] = st.number_input(f"Timer {interval}", value=std_t, step=0.5, key=f"t_{interval}")
 
-                    # 2. TABELLER
                     st.write("---")
                     st.write("### 2. Specifikation af indhold")
                     
@@ -107,37 +105,38 @@ else:
                         mask = df[i].astype(str).replace(['nan', 'None', ''], None).notna()
                         current_df = df[mask].copy()
                         
-                        # Identificer diverse rækker baseret på søgeord
-                        div_mask = current_df[besk_kol].str.contains('|'.join(DIVERSE_SØGEORD), case=False, na=False)
-                        interval_div_items = current_df[div_mask]
-                        remaining_items = current_df[~div_mask]
+                        # Filtrering: Flyt specifikke ting til Diverse og fjern CSV'ens egen "Diverse" række
+                        is_div = current_df[besk_kol].str.contains('|'.join(DIVERSE_SØGEORD + ["Diverse"]), case=False, na=False)
+                        interval_div_items = current_df[is_div & ~current_df[besk_kol].str.contains("Diverse", case=False)]
+                        remaining_items = current_df[~is_div]
 
                         with st.expander(f"🔍 Se indhold for {i}"):
-                            # TABEL 1: RESERVEDELE
+                            # --- RESERVEDELE (MED VARENR) ---
                             st.write("**Reservedele**")
                             res_df = remaining_items[remaining_items.index < v_s]
-                            cols_to_show = [c for c in [besk_kol, vare_kol, 'Antal', 'Enhed', ordretype] if c in df.columns]
-                            st.table(res_df[cols_to_show])
+                            res_cols = [c for c in [besk_kol, vare_kol, 'Antal', 'Enhed', ordretype] if c in df.columns]
+                            st.table(res_df[res_cols])
                             
-                            # TABEL 2: VÆSKER
-                            st.write("**Væsker (Foreslået salgspris fra Univar)**")
+                            # --- VÆSKER (UDEN VARENR) ---
+                            st.write("**Væsker (Salgspris Univar)**")
                             fluid_df = remaining_items[remaining_items.index > v_s]
                             fluid_df = fluid_df[~fluid_df[besk_kol].astype(str).str.strip().str.lower().isin(["none", "nan", ""])]
-                            fluid_cols = [c for c in [besk_kol, vare_kol, 'Antal', 'Enhed', pris_kol_h] if c in df.columns]
-                            st.table(fluid_df[fluid_cols])
+                            # Omdøber kolonnen for visning
+                            fluid_view = fluid_df[[besk_kol, 'Antal', 'Enhed', pris_kol_h]].copy()
+                            fluid_view.columns = [besk_kol, 'Antal', 'Enhed', 'Salgspris Univar']
+                            st.table(fluid_view)
                             
-                            # TABEL 3: DIVERSE
+                            # --- DIVERSE (UDEN VARENR) ---
                             st.write("**Diverse**")
-                            # Kombiner fundne diverse-ting med den faste 500 kr. post
                             div_list = []
                             for _, row in interval_div_items.iterrows():
                                 div_list.append({
                                     besk_kol: row[besk_kol],
-                                    vare_kol: row[vare_kol],
                                     "Antal": row["Antal"],
                                     "Pris": rens_tal(row[pris_kol_h])
                                 })
-                            div_list.append({besk_kol: "Diverse tillæg (fast)", vare_kol: "-", "Antal": 1, "Pris": FAST_DIVERSE_TILLAEG})
+                            # Tilføj den faste post på 500 kr
+                            div_list.append({besk_kol: "Diverse tillæg (fast)", "Antal": 1, "Pris": FAST_DIVERSE_TILLAEG})
                             st.table(pd.DataFrame(div_list))
 
                             # Beregninger
