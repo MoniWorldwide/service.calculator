@@ -1,3 +1,21 @@
+import sys
+# Her "snyder" vi systemet så underskrifts-modulet tror alt er normalt
+try:
+    import imghdr
+except ImportError:
+    from unittest.mock import MagicMock
+    mock_imghdr = MagicMock()
+    # Vi fortæller Python at 'imghdr' bare er denne tomme boks
+    sys.modules["imghdr"] = mock_imghdr
+
+import streamlit as st
+import pandas as pd
+import os
+from datetime import datetime
+from streamlit_drawable_canvas import st_canvas
+
+# ... resten af din kode fortsætter herfra
+
 import streamlit as st
 import pandas as pd
 import os
@@ -180,3 +198,4 @@ else:
 
     except Exception as e:
         st.error(f"Der opstod en fejl i databehandlingen: {e}")
+
