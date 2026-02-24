@@ -7,8 +7,9 @@ from datetime import datetime
 st.set_page_config(page_title="Deutz-Fahr Intern Beregner", layout="wide")
 
 DATA_MAPPE = "service_ark"
+# Din faste instruks: 500 DKK til diverse på ALLE serviceintervaller
 FAST_DIVERSE_TILLAEG = 500.0 
-# "aircon" fjernet herfra så kølemiddel bliver i Væsker
+# "aircon" fjernet herfra så kølemiddel bliver i Væsker-sektionen
 DIVERSE_SØGEORD = ["Testudstyr", "D-Tech", "Hjælpematerialer"]
 
 def find_logo():
@@ -22,13 +23,14 @@ def rens_tal(val):
     if pd.isna(val) or str(val).strip() == "": return 0.0
     s = str(val).strip()
     
-    # Håndtering af 1.500,00 -> 1500.00
+    # Standardisering af formater: 1.500,00 -> 1500.00
     if "." in s and "," in s:
         s = s.replace(".", "").replace(",", ".")
     elif "," in s:
         s = s.replace(",", ".")
     elif "." in s:
-        # Hvis der er 3 cifre efter punktum (f.eks. 500.000), er det sandsynligvis en fejl-læsning
+        # Hvis der er præcis 3 cifre efter punktum (f.eks. 500.000), 
+        # tolkes det som en tusindtals-separator og fjernes.
         dele = s.split('.')
         if len(dele[-1]) == 3:
             s = s.replace(".", "")
@@ -120,7 +122,6 @@ else:
                         main_items = current_df[~(is_special_div | is_csv_div_row)].copy()
 
                         with st.expander(f"🔍 Se indhold for {i}"):
-                            # Tjekker kolonne-tilgængelighed dynamisk
                             def safe_cols(wanted):
                                 return [c for c in wanted if c in df.columns]
 
@@ -129,7 +130,7 @@ else:
                             res_df = main_items[main_items.index < v_s]
                             st.table(res_df[safe_cols([besk_kol, vare_kol, 'Antal', 'Enhed', ordretype])])
                             
-                            # --- 2. VÆSKER ---
+                            # --- 2. VÆSKER (MED ENHEDSPRIS OG TOTAL) ---
                             st.write("**Væsker (Salgspris Univar)**")
                             fluid_df = main_items[main_items.index > v_s].copy()
                             fluid_df['Enhedspris'] = fluid_df[pris_kol_h].apply(rens_tal)
@@ -138,7 +139,7 @@ else:
                             fluid_view = fluid_df[safe_cols([besk_kol, 'Antal', 'Enhed', 'Enhedspris', 'Total'])]
                             st.table(fluid_view.style.format({'Enhedspris': '{:,.2f}', 'Total': '{:,.2f}'}))
                             
-                            # --- 3. DIVERSE ---
+                            # --- 3. DIVERSE (UDEN VARENR OG RETTET FORMAT) ---
                             st.write("**Diverse**")
                             div_rows = []
                             for _, row in special_div_items.iterrows():
@@ -146,7 +147,7 @@ else:
                             div_rows.append({besk_kol: "Diverse tillæg (fast)", "Antal": 1, "Pris": FAST_DIVERSE_TILLAEG})
                             st.table(pd.DataFrame(div_rows))
 
-                            # Beregninger
+                            # Akkumulering
                             total_sum["res"] += (res_df[ordretype].apply(rens_tal) * res_df['Antal'].apply(rens_tal) * (1 + avance/100)).sum()
                             total_sum["fluid"] += fluid_df['Total'].sum()
                             total_sum["div"] += sum(d["Pris"] for d in div_rows)
