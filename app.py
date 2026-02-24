@@ -8,7 +8,8 @@ st.set_page_config(page_title="Deutz-Fahr Intern Beregner", layout="wide")
 
 DATA_MAPPE = "service_ark"
 # Din faste instruks: 500 DKK til diverse på ALLE modeller/services
-FAST_DIVERSE_BELOEB = 500.0 
+FAST_DIVERSE_TILLAEG = 500.0 
+DIVERSE_SØGEORD = ["Testudstyr", "D-Tech", "aircon", "Hjælpematerialer"]
 
 def find_logo():
     stier = ["logo.png", os.path.join(DATA_MAPPE, "logo.png")]
@@ -30,7 +31,8 @@ with col_logo:
     if logo_sti: st.image(logo_sti, width=150)
     else: st.subheader("DEUTZ-FAHR")
 with col_title:
-    st.title("Serviceberegner & Kundekontrakt")
+    st.title("Intern Serviceberegner & Kundekontrakt")
+    st.caption("Inkl. varenumre og fuld specifikation af diverse")
 
 st.divider()
 
@@ -66,8 +68,10 @@ else:
             df = pd.read_csv(valgt_fil, sep=';', encoding='latin-1', header=h_idx)
             df.columns = [str(c).strip() for c in df.columns]
             
+            # Kolonne-identifikation
             besk_kol = df.columns[0]
-            pris_kol_h = df.columns[7] # Kolonne H
+            vare_kol = df.columns[1] # Varenummer
+            pris_kol_h = df.columns[7] # Kolonne H (Væsker/Diverse)
             int_kols = [c for c in df.columns if "timer" in c.lower()]
 
             if int_kols:
@@ -101,33 +105,49 @@ else:
                     
                     for i in hist_int:
                         mask = df[i].astype(str).replace(['nan', 'None', ''], None).notna()
+                        current_df = df[mask].copy()
                         
+                        # Identificer diverse rækker baseret på søgeord
+                        div_mask = current_df[besk_kol].str.contains('|'.join(DIVERSE_SØGEORD), case=False, na=False)
+                        interval_div_items = current_df[div_mask]
+                        remaining_items = current_df[~div_mask]
+
                         with st.expander(f"🔍 Se indhold for {i}"):
                             # TABEL 1: RESERVEDELE
                             st.write("**Reservedele**")
-                            eksist_res = [c for c in [besk_kol, 'Antal', 'Enhed', ordretype] if c in df.columns]
-                            res_df = df[mask & (df.index < v_s)][eksist_res]
-                            st.table(res_df)
+                            res_df = remaining_items[remaining_items.index < v_s]
+                            cols_to_show = [c for c in [besk_kol, vare_kol, 'Antal', 'Enhed', ordretype] if c in df.columns]
+                            st.table(res_df[cols_to_show])
                             
-                            # TABEL 2: VÆSKER (UNIVAR)
+                            # TABEL 2: VÆSKER
                             st.write("**Væsker (Foreslået salgspris fra Univar)**")
-                            eksist_vd = [c for c in [besk_kol, 'Antal', 'Enhed', pris_kol_h] if c in df.columns]
-                            vd_df = df[mask & (df.index > v_s)][eksist_vd]
-                            vd_df = vd_df[~vd_df[besk_kol].astype(str).str.strip().str.lower().isin(["none", "nan", "", "diverse"])]
-                            st.table(vd_df)
+                            fluid_df = remaining_items[remaining_items.index > v_s]
+                            fluid_df = fluid_df[~fluid_df[besk_kol].astype(str).str.strip().str.lower().isin(["none", "nan", ""])]
+                            fluid_cols = [c for c in [besk_kol, vare_kol, 'Antal', 'Enhed', pris_kol_h] if c in df.columns]
+                            st.table(fluid_df[fluid_cols])
                             
-                            # TABEL 3: DIVERSE (DIN FASTE POST)
+                            # TABEL 3: DIVERSE
                             st.write("**Diverse**")
-                            div_data = {besk_kol: ["Diverse"], "Antal": [1], "Pris": [f"{FAST_DIVERSE_BELOEB:,.2f}"]}
-                            st.table(pd.DataFrame(div_data))
+                            # Kombiner fundne diverse-ting med den faste 500 kr. post
+                            div_list = []
+                            for _, row in interval_div_items.iterrows():
+                                div_list.append({
+                                    besk_kol: row[besk_kol],
+                                    vare_kol: row[vare_kol],
+                                    "Antal": row["Antal"],
+                                    "Pris": rens_tal(row[pris_kol_h])
+                                })
+                            div_list.append({besk_kol: "Diverse tillæg (fast)", vare_kol: "-", "Antal": 1, "Pris": FAST_DIVERSE_TILLAEG})
+                            st.table(pd.DataFrame(div_list))
 
                             # Beregninger
                             c_res = (res_df[ordretype].apply(rens_tal) * res_df['Antal'].apply(rens_tal) * (1 + avance/100)).sum()
-                            c_fluid = (vd_df[pris_kol_h].apply(rens_tal) * vd_df['Antal'].apply(rens_tal)).sum()
+                            c_fluid = (fluid_df[pris_kol_h].apply(rens_tal) * fluid_df['Antal'].apply(rens_tal)).sum()
+                            c_div = sum(item["Pris"] for item in div_list)
                             
                             t_res += c_res
                             t_fluid += c_fluid
-                            t_div += FAST_DIVERSE_BELOEB
+                            t_div += c_div
                             t_arb += (bruger_timer[i] * timepris)
 
                     total_omk = t_res + t_fluid + t_div + t_arb
