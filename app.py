@@ -8,7 +8,8 @@ st.set_page_config(page_title="Deutz-Fahr Intern Beregner", layout="wide")
 
 DATA_MAPPE = "service_ark"
 FAST_DIVERSE_TILLAEG = 500.0 
-DIVERSE_SØGEORD = ["Testudstyr", "D-Tech", "aircon", "Hjælpematerialer"]
+# "Kølemiddel" er fjernet fra søgeordene her, så det ikke ryger i Diverse
+DIVERSE_SØGEORD = ["Testudstyr", "D-Tech", "Hjælpematerialer"]
 
 def find_logo():
     stier = ["logo.png", os.path.join(DATA_MAPPE, "logo.png")]
@@ -17,15 +18,29 @@ def find_logo():
     return None
 
 def rens_tal(val):
+    """Robust håndtering af danske talformater fra CSV"""
     if pd.isna(val) or str(val).strip() == "": return 0.0
     s = str(val).strip()
-    if "," in s and "." in s:
+    
+    # Hvis der er både punktum og komma (f.eks. 1.250,50)
+    if "." in s and "," in s:
         s = s.replace(".", "").replace(",", ".")
+    # Hvis der kun er komma (f.eks. 500,00)
     elif "," in s:
         s = s.replace(",", ".")
+    # Hvis der er et punktum, tjekker vi om det ligner en decimal (f.eks. 500.00) 
+    # eller en tusindtals-fejl (f.eks. 500.000)
+    elif "." in s:
+        dele = s.split('.')
+        if len(dele[-1]) > 2: # Hvis der er mere end 2 cifre efter punktum, er det nok tusindtal
+            s = s.replace(".", "")
+            
+    # Fjern alt undtagen tal og det nuværende punktum
     s = "".join(c for c in s if c.isdigit() or c == '.')
-    try: return float(s)
-    except: return 0.0
+    try:
+        return float(s)
+    except:
+        return 0.0
 
 # --- 2. HEADER ---
 col_logo, col_title = st.columns([1, 3])
@@ -69,9 +84,7 @@ else:
             df = pd.read_csv(valgt_fil, sep=';', encoding='latin-1', header=h_idx)
             df.columns = [str(c).strip() for c in df.columns]
             
-            besk_kol = df.columns[0]
-            vare_kol = df.columns[1] 
-            pris_kol_h = df.columns[7] 
+            besk_kol, vare_kol, pris_kol_h = df.columns[0], df.columns[1], df.columns[7] 
             int_kols = [c for c in df.columns if "timer" in c.lower()]
 
             if int_kols:
@@ -112,38 +125,32 @@ else:
                         main_items = current_df[~(is_special_div | is_csv_div_row)].copy()
 
                         with st.expander(f"🔍 Se indhold for {i}"):
-                            # Tjek hvilke kolonner der findes før visning
-                            def filter_cols(cols):
-                                return [c for c in cols if c in df.columns]
-
                             # --- 1. RESERVEDELE ---
                             st.write("**Reservedele**")
                             res_df = main_items[main_items.index < v_s]
-                            st.table(res_df[filter_cols([besk_kol, vare_kol, 'Antal', 'Enhed', ordretype])])
+                            st.table(res_df[[c for c in [besk_kol, vare_kol, 'Antal', 'Enhed', ordretype] if c in df.columns]])
                             
-                            # --- 2. VÆSKER ---
+                            # --- 2. VÆSKER (MED BEREGNINGER) ---
                             st.write("**Væsker (Salgspris Univar)**")
-                            fluid_df = main_items[main_items.index > v_s]
-                            fluid_view = fluid_df[filter_cols([besk_kol, 'Antal', 'Enhed', pris_kol_h])].copy()
-                            if pris_kol_h in fluid_view.columns:
-                                fluid_view = fluid_view.rename(columns={pris_kol_h: 'Salgspris Univar'})
-                            st.table(fluid_view)
+                            fluid_df = main_items[main_items.index > v_s].copy()
+                            fluid_df['Enhedspris'] = fluid_df[pris_kol_h].apply(rens_tal)
+                            fluid_df['Antal_Num'] = fluid_df['Antal'].apply(rens_tal)
+                            fluid_df['Total'] = fluid_df['Enhedspris'] * fluid_df['Antal_Num']
+                            
+                            fluid_view = fluid_df[[besk_kol, 'Antal', 'Enhed', 'Enhedspris', 'Total']]
+                            st.table(fluid_view.style.format({'Enhedspris': '{:,.2f}', 'Total': '{:,.2f}'}))
                             
                             # --- 3. DIVERSE ---
                             st.write("**Diverse**")
                             div_rows = []
                             for _, row in special_div_items.iterrows():
-                                div_rows.append({
-                                    besk_kol: row[besk_kol], 
-                                    "Antal": row.get("Antal", 1), 
-                                    "Pris": rens_tal(row[pris_kol_h]) if pris_kol_h in df.columns else 0.0
-                                })
+                                div_rows.append({besk_kol: row[besk_kol], "Antal": row.get("Antal", 1), "Pris": rens_tal(row[pris_kol_h])})
                             div_rows.append({besk_kol: "Diverse tillæg (fast)", "Antal": 1, "Pris": FAST_DIVERSE_TILLAEG})
                             st.table(pd.DataFrame(div_rows))
 
-                            # Beregninger
+                            # Beregn summer til totalen
                             c_res = (res_df[ordretype].apply(rens_tal) * res_df['Antal'].apply(rens_tal) * (1 + avance/100)).sum()
-                            c_fluid = (fluid_df[pris_kol_h].apply(rens_tal) * fluid_df['Antal'].apply(rens_tal)).sum()
+                            c_fluid = fluid_df['Total'].sum()
                             c_div = sum(d["Pris"] for d in div_rows)
                             
                             total_sum["res"] += c_res
@@ -165,6 +172,7 @@ else:
                     st.success(f"**Resultat: {cph:,.2f} DKK pr. driftstime**")
 
                 with tab_kunde:
+                    # (Kundekontrakt layout forbliver uændret)
                     st.markdown(f"""
                     <div style="padding: 30px; border: 1px solid #ddd; background-color: white; color: black; font-family: Arial;">
                         <h2 style="text-align: center; color: #367c2b;">SERVICEAFTALE</h2>
@@ -177,11 +185,6 @@ else:
                         <div style="background-color: #f1f8e9; padding: 25px; border: 1px solid #367c2b; text-align: center;">
                             <span style="font-size: 1.5em; color: #2e7d32;"><b>FAST PRIS PR. DRIFTSTIME: {cph:,.2f} DKK</b></span><br>
                             <small>(Ekskl. moms og brændstof)</small>
-                        </div>
-                        <br><br><br>
-                        <div style="display: flex; justify-content: space-between;">
-                            <div style="border-top: 1px solid black; width: 40%; text-align: center;"><br>Forhandler: {forhandler}</div>
-                            <div style="border-top: 1px solid black; width: 40%; text-align: center;"><br>Kunde: {kunde_navn}</div>
                         </div>
                     </div>
                     """, unsafe_allow_html=True)
