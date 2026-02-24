@@ -8,7 +8,7 @@ st.set_page_config(page_title="Deutz-Fahr Intern Beregner", layout="wide")
 
 DATA_MAPPE = "service_ark"
 FAST_DIVERSE_TILLAEG = 500.0 
-# "Kølemiddel" er fjernet fra søgeordene her, så det ikke ryger i Diverse
+# "aircon" fjernet herfra så kølemiddel bliver i Væsker
 DIVERSE_SØGEORD = ["Testudstyr", "D-Tech", "Hjælpematerialer"]
 
 def find_logo():
@@ -18,29 +18,24 @@ def find_logo():
     return None
 
 def rens_tal(val):
-    """Robust håndtering af danske talformater fra CSV"""
+    """Håndterer danske formater og forhindrer '500.000' fejl ved 500 kr."""
     if pd.isna(val) or str(val).strip() == "": return 0.0
     s = str(val).strip()
     
-    # Hvis der er både punktum og komma (f.eks. 1.250,50)
+    # Håndtering af 1.500,00 -> 1500.00
     if "." in s and "," in s:
         s = s.replace(".", "").replace(",", ".")
-    # Hvis der kun er komma (f.eks. 500,00)
     elif "," in s:
         s = s.replace(",", ".")
-    # Hvis der er et punktum, tjekker vi om det ligner en decimal (f.eks. 500.00) 
-    # eller en tusindtals-fejl (f.eks. 500.000)
     elif "." in s:
+        # Hvis der er 3 cifre efter punktum (f.eks. 500.000), er det sandsynligvis en fejl-læsning
         dele = s.split('.')
-        if len(dele[-1]) > 2: # Hvis der er mere end 2 cifre efter punktum, er det nok tusindtal
+        if len(dele[-1]) == 3:
             s = s.replace(".", "")
             
-    # Fjern alt undtagen tal og det nuværende punktum
     s = "".join(c for c in s if c.isdigit() or c == '.')
-    try:
-        return float(s)
-    except:
-        return 0.0
+    try: return float(s)
+    except: return 0.0
 
 # --- 2. HEADER ---
 col_logo, col_title = st.columns([1, 3])
@@ -125,19 +120,22 @@ else:
                         main_items = current_df[~(is_special_div | is_csv_div_row)].copy()
 
                         with st.expander(f"🔍 Se indhold for {i}"):
+                            # Tjekker kolonne-tilgængelighed dynamisk
+                            def safe_cols(wanted):
+                                return [c for c in wanted if c in df.columns]
+
                             # --- 1. RESERVEDELE ---
                             st.write("**Reservedele**")
                             res_df = main_items[main_items.index < v_s]
-                            st.table(res_df[[c for c in [besk_kol, vare_kol, 'Antal', 'Enhed', ordretype] if c in df.columns]])
+                            st.table(res_df[safe_cols([besk_kol, vare_kol, 'Antal', 'Enhed', ordretype])])
                             
-                            # --- 2. VÆSKER (MED BEREGNINGER) ---
+                            # --- 2. VÆSKER ---
                             st.write("**Væsker (Salgspris Univar)**")
                             fluid_df = main_items[main_items.index > v_s].copy()
                             fluid_df['Enhedspris'] = fluid_df[pris_kol_h].apply(rens_tal)
-                            fluid_df['Antal_Num'] = fluid_df['Antal'].apply(rens_tal)
-                            fluid_df['Total'] = fluid_df['Enhedspris'] * fluid_df['Antal_Num']
+                            fluid_df['Total'] = fluid_df['Enhedspris'] * fluid_df['Antal'].apply(rens_tal)
                             
-                            fluid_view = fluid_df[[besk_kol, 'Antal', 'Enhed', 'Enhedspris', 'Total']]
+                            fluid_view = fluid_df[safe_cols([besk_kol, 'Antal', 'Enhed', 'Enhedspris', 'Total'])]
                             st.table(fluid_view.style.format({'Enhedspris': '{:,.2f}', 'Total': '{:,.2f}'}))
                             
                             # --- 3. DIVERSE ---
@@ -148,14 +146,10 @@ else:
                             div_rows.append({besk_kol: "Diverse tillæg (fast)", "Antal": 1, "Pris": FAST_DIVERSE_TILLAEG})
                             st.table(pd.DataFrame(div_rows))
 
-                            # Beregn summer til totalen
-                            c_res = (res_df[ordretype].apply(rens_tal) * res_df['Antal'].apply(rens_tal) * (1 + avance/100)).sum()
-                            c_fluid = fluid_df['Total'].sum()
-                            c_div = sum(d["Pris"] for d in div_rows)
-                            
-                            total_sum["res"] += c_res
-                            total_sum["fluid"] += c_fluid
-                            total_sum["div"] += c_div
+                            # Beregninger
+                            total_sum["res"] += (res_df[ordretype].apply(rens_tal) * res_df['Antal'].apply(rens_tal) * (1 + avance/100)).sum()
+                            total_sum["fluid"] += fluid_df['Total'].sum()
+                            total_sum["div"] += sum(d["Pris"] for d in div_rows)
                             total_sum["arb"] += (bruger_timer[i] * timepris)
 
                     total_samlet = sum(total_sum.values())
@@ -172,7 +166,6 @@ else:
                     st.success(f"**Resultat: {cph:,.2f} DKK pr. driftstime**")
 
                 with tab_kunde:
-                    # (Kundekontrakt layout forbliver uændret)
                     st.markdown(f"""
                     <div style="padding: 30px; border: 1px solid #ddd; background-color: white; color: black; font-family: Arial;">
                         <h2 style="text-align: center; color: #367c2b;">SERVICEAFTALE</h2>
