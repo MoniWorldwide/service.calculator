@@ -7,7 +7,8 @@ from datetime import datetime
 st.set_page_config(page_title="Deutz-Fahr Intern Beregner", layout="wide")
 
 DATA_MAPPE = "service_ark"
-FAST_DIVERSE_GEBYR = 500.0  # Din faste instruks: Diverse/Miljø pr. service
+# Din faste instruks: Tilføj altid 500 DKK pr. service interval
+FAST_DIVERSE_GEBYR = 500.0 
 
 def find_logo():
     stier = ["logo.png", os.path.join(DATA_MAPPE, "logo.png")]
@@ -29,8 +30,8 @@ with col_logo:
     if logo_sti: st.image(logo_sti, width=150)
     else: st.subheader("DEUTZ-FAHR")
 with col_title:
-    st.title("Intern Serviceberegner & Kundekontrakt")
-    st.caption("Version 2.0 - Fejlsikret kolonnevalg")
+    st.title("Serviceberegner & Kundekontrakt")
+    st.caption("Fuld oversigt over reservedele, væsker og diverse")
 
 st.divider()
 
@@ -45,7 +46,7 @@ else:
         st.sidebar.header("🔧 Forhandler Indstillinger")
         model_valg = st.sidebar.selectbox("Vælg Model", modeller)
         timepris = st.sidebar.number_input("Værkstedstimepris (DKK)", value=750, step=25)
-        ordretype = st.sidebar.radio("Vælg Prisliste", ["Brutto", "Haste", "Uge", "Måned"])
+        ordretype = st.sidebar.radio("Prisliste (Reservedele)", ["Brutto", "Haste", "Uge", "Måned"])
         avance = st.sidebar.slider("Avance på dele (%)", 0, 50, 0)
         
         st.sidebar.divider()
@@ -54,7 +55,6 @@ else:
         kunde_navn = st.sidebar.text_input("Kunde")
         stelnummer = st.sidebar.text_input("Stelnummer")
 
-        # Indlæs data
         valgt_fil = os.path.join(DATA_MAPPE, f"{model_valg}.csv")
         try:
             df_raw = pd.read_csv(valgt_fil, sep=';', encoding='latin-1', header=None)
@@ -68,7 +68,7 @@ else:
             df.columns = [str(c).strip() for c in df.columns]
             
             besk_kol = df.columns[0]
-            pris_kol_h = df.columns[7] # Kolonne H
+            pris_kol_h = df.columns[7] # Kolonne H (Pris for væsker/diverse)
             int_kols = [c for c in df.columns if "timer" in c.lower()]
 
             if int_kols:
@@ -83,7 +83,7 @@ else:
                     st.subheader(f"Kalkulation: {model_valg}")
                     
                     # 1. ARBEJDSTIMER
-                    st.write("### 1. Tilpas Arbejdstimer")
+                    st.write("### 1. Arbejdstimer pr. service")
                     m_arb_row = df[df[besk_kol].astype(str).str.contains('Arbejd', case=False, na=False)]
                     bruger_timer = {}
                     
@@ -93,9 +93,9 @@ else:
                         with t_cols[idx]:
                             bruger_timer[interval] = st.number_input(f"Timer {interval}", value=std_t, step=0.5, key=f"t_{interval}")
 
-                    # 2. TABELLER OG BEREGNING
+                    # 2. DETALJEREDE TABELLER
                     st.write("---")
-                    st.write("### 2. Specifikation af dele og væsker")
+                    st.write("### 2. Specifikation af indhold")
                     
                     v_idx = df[df[besk_kol].astype(str).str.contains('Væsker', case=False, na=False)].index
                     v_s = v_idx[0] if len(v_idx) > 0 else 9999
@@ -105,29 +105,35 @@ else:
                     for i in hist_int:
                         mask = df[i].astype(str).replace(['nan', 'None', ''], None).notna()
                         
-                        with st.expander(f"Se indhold for {i}"):
-                            # --- FEJLSIKRING AF KOLONNER ---
-                            # Vi tjekker hvilke af de ønskede kolonner der faktisk findes i CSV'en
-                            ønskede_kolonner = [besk_kol, 'Antal', 'Enhed', ordretype]
-                            eksisterende_kolonner = [c for c in ønskede_kolonner if c in df.columns]
-                            
-                            res_subset = df[mask & (df.index < v_s)][eksisterende_kolonner]
+                        with st.expander(f"🔍 Se fuldt indhold for {i}"):
+                            # --- TABEL 1: RESERVEDELE ---
+                            st.write("**Reservedele (Filtre o.lign.)**")
+                            ønskede_res = [besk_kol, 'Antal', 'Enhed', ordretype]
+                            eksist_res = [c for c in ønskede_res if c in df.columns]
+                            res_subset = df[mask & (df.index < v_s)][eksist_res]
                             st.table(res_subset)
                             
-                            # Beregning (bruger 'Antal' og valgt prisliste/ordretype)
-                            antal_val = res_subset['Antal'].apply(rens_tal) if 'Antal' in res_subset.columns else 0.0
-                            pris_val = res_subset[ordretype].apply(rens_tal) if ordretype in res_subset.columns else 0.0
+                            # --- TABEL 2: VÆSKER & DIVERSE ---
+                            st.write("**Væsker, Olier & Diverse**")
+                            ønskede_vd = [besk_kol, 'Antal', 'Enhed', pris_kol_h]
+                            eksist_vd = [c for c in ønskede_vd if c in df.columns]
+                            vd_subset = df[mask & (df.index > v_s)][eksist_vd]
                             
-                            curr_res = (pris_val * antal_val * (1 + avance/100)).sum()
+                            # Vi fjerner tomme rækker i diverse-tabellen
+                            vd_subset = vd_subset[~vd_subset[besk_kol].astype(str).str.strip().str.lower().isin(["none", "nan", ""])]
+                            st.table(vd_subset)
                             
-                            vd_df = df[(df.index > v_s) & mask]
-                            vd_df = vd_df[~vd_df[besk_kol].astype(str).str.strip().str.lower().isin(["none", "nan", "", "diverse"])]
+                            # --- INFO OM FAST GEBYR ---
+                            st.info(f"Hertil lagt: Diverse/Miljøgebyr: {FAST_DIVERSE_GEBYR:,.2f} kr.")
+
+                            # Beregninger til totalen
+                            antal_res = res_subset['Antal'].apply(rens_tal) if 'Antal' in res_subset.columns else 0.0
+                            pris_res = res_subset[ordretype].apply(rens_tal) if ordretype in res_subset.columns else 0.0
+                            curr_res = (pris_res * antal_res * (1 + avance/100)).sum()
                             
-                            antal_vd = vd_df['Antal'].apply(rens_tal) if 'Antal' in vd_df.columns else 0.0
-                            pris_vd = vd_df[pris_kol_h].apply(rens_tal) if pris_kol_h in vd_df.columns else 0.0
-                            
-                            curr_vd = (pris_vd * antal_vd).sum()
-                            curr_vd += FAST_DIVERSE_GEBYR # Miljø/Diverse posten
+                            antal_vd = vd_subset['Antal'].apply(rens_tal) if 'Antal' in vd_subset.columns else 0.0
+                            pris_vd = vd_subset[pris_kol_h].apply(rens_tal) if pris_kol_h in vd_subset.columns else 0.0
+                            curr_vd = (pris_vd * antal_vd).sum() + FAST_DIVERSE_GEBYR
                             
                             curr_arb = (bruger_timer[i] * timepris)
                             
@@ -139,14 +145,14 @@ else:
                     cph = total_omk / valgt_t if valgt_t > 0 else 0
 
                     st.write("---")
-                    st.write("### 3. Samlet Oversigt")
+                    st.write("### 3. Økonomisk Opsummering")
                     c1, c2, c3, c4 = st.columns(4)
                     c1.metric("Reservedele", f"{t_res:,.2f} kr.")
                     c2.metric("Væsker & Miljø", f"{t_vd:,.2f} kr.")
                     c3.metric("Arbejdsløn", f"{t_arb:,.2f} kr.")
-                    c4.metric("TOTAL", f"{total_omk:,.2f} kr.")
+                    c4.metric("TOTAL OMK.", f"{total_omk:,.2f} kr.")
                     
-                    st.success(f"**Anbefalet timepris: {cph:,.2f} DKK / t**")
+                    st.success(f"**Resultat: {cph:,.2f} DKK pr. driftstime**")
 
                 with tab_kunde:
                     st.markdown(f"""
@@ -157,8 +163,8 @@ else:
                         <p><b>Kunde:</b> {kunde_navn} | <b>Stelnummer:</b> {stelnummer}</p>
                         <br>
                         <h4>Aftalens omfang</h4>
-                        <p>Aftalen omfatter alle planlagte serviceintervaller frem til traktoren har kørt <b>{valgt_t} timer</b>.</p>
-                        <p>Inkluderede intervaller: {', '.join(hist_int)}.</p>
+                        <p>Denne aftale dækker alle planlagte serviceeftersyn i henhold til fabrikantens forskrifter frem til traktoren har opnået <b>{valgt_t} driftstimer</b>.</p>
+                        <p>Serviceintervaller inkluderet: {', '.join(hist_int)}.</p>
                         <br>
                         <div style="background-color: #f1f8e9; padding: 25px; border: 1px solid #367c2b; text-align: center;">
                             <span style="font-size: 1.5em; color: #2e7d32;"><b>FAST PRIS PR. DRIFTSTIME: {cph:,.2f} DKK</b></span><br>
@@ -173,7 +179,7 @@ else:
                     """, unsafe_allow_html=True)
                     
                     st.write("---")
-                    st.info("Tip: Brug Ctrl+P for at printe eller gemme som PDF.")
+                    st.info("Tip: Brug Ctrl+P for at gemme som PDF eller printe.")
 
         except Exception as e:
             st.error(f"Der opstod en fejl ved beregningen: {e}")
